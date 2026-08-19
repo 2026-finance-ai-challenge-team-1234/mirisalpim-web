@@ -9,3 +9,8 @@ sqlparse==0.6.0
 typing_extensions==4.16.0
 uvicorn==0.51.0
 whitenoise==6.12.0
+
+# ai_core (Django 비의존, 이 프로세스가 import 해서 씀)
+anthropic>=0.121.0
+google-genai>=1.0.0
+httpx>=0.27

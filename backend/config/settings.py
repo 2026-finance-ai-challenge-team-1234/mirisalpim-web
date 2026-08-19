@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 import os
+import sys
 import dj_database_url
 from dotenv import load_dotenv
 
@@ -20,6 +21,17 @@ load_dotenv()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIST = BASE_DIR / "frontend_dist"
+
+# ai_core 는 backend/ 바깥(mirisalpim-web/ai_core)에 있고 Django 의존이 없다.
+# Django 프로세스는 import 만 하므로 경로만 추가한다 (CLI 단독 실행은 그대로 가능).
+REPO_ROOT = BASE_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+# 시나리오 카드 원본 (seed_scenarios 관리 명령이 읽는다)
+SCENARIO_SEED_DIR = Path(
+    os.environ.get("SCENARIO_SEED_DIR", REPO_ROOT.parent / "scenario" / "json_data")
+)
 
 
 # Quick-start development settings - unsuitable for production
