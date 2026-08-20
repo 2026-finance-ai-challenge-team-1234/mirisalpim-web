@@ -32,7 +32,10 @@ from .state import (
 )
 from .types import Difficulty, Scenario, SessionState
 
-DATA_DIR = Path(__file__).resolve().parent / "data" / "scenarios"
+#: mirisalpim-web/data/scenarios/ — ai_core 와 형제 디렉터리. Django(SCENARIO_SEED_DIR)와
+#: 같은 원본을 읽는다. 배포 저장소(mirisalpim-web) 안에 있어야 Railway 등에서 실제로 존재한다 —
+#: 예전에는 AI_challenge/scenario/ 를 가리켜서 mirisalpim-web 단독 체크아웃 시 없는 경로였다.
+DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "scenarios"
 
 
 def load_scenario(scenario_id: str) -> Scenario:

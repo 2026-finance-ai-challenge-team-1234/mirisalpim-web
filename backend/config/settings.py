@@ -28,9 +28,12 @@ REPO_ROOT = BASE_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# 시나리오 카드 원본 (seed_scenarios 관리 명령이 읽는다)
+# 시나리오 카드 원본 (seed_scenarios 관리 명령이 읽는다).
+# mirisalpim-web/data/scenarios/ — 배포 저장소 안에 있어야 한다. 예전에는
+# REPO_ROOT.parent/scenario/json_data(별도 저장소 AI_challenge/scenario/)를 가리켜서
+# mirisalpim-web 단독 체크아웃(Railway 등)에서는 존재하지 않는 경로였다.
 SCENARIO_SEED_DIR = Path(
-    os.environ.get("SCENARIO_SEED_DIR", REPO_ROOT.parent / "scenario" / "json_data")
+    os.environ.get("SCENARIO_SEED_DIR", REPO_ROOT / "data" / "scenarios")
 )
 
 

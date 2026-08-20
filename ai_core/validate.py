@@ -5,8 +5,8 @@ Django 의존이 없다 — AI 코어 로더와 Django seed importer 가 **같�
 이 함수를 통과해야 한다.
 
 사용법:
-    python -m ai_core.validate                     # ai_core/data/scenarios/ 전체
-    python -m ai_core.validate ../scenario/json_data
+    python -m ai_core.validate                     # mirisalpim-web/data/scenarios/ 전체
+    python -m ai_core.validate ../scenario/json_data  # 다른 경로 지정
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ CATEGORIES = {"voice", "smishing", "phishing"}
 TARGET_TRACKS = {"teen", "young", "middle_age", "senior"}
 SIGNAL_TYPES = {"risk", "legitimacy"}
 END_RESULTS = {"training_success", "terminate", "safety_stop"}
+SOURCE_REVIEW_STATUSES = {"human_reviewed", "auto_labeled"}
 
 #: scenario.md 의 분류 코드. T=보이스피싱, S=스미싱, 뒤에 대분류 2자리 + 세부번호
 TRACK_PATTERN = r"^[TS]\d{2}-\d{1,2}$"
@@ -32,6 +33,8 @@ REQUIRED = [
     "target_tracks",
     "title",
     "source",
+    "source_refs",
+    "source_review_status",
     "is_scam",
     "difficulty",
     "goal",
@@ -85,6 +88,22 @@ def validate(card: dict[str, Any]) -> list[str]:
 
     if not isinstance(card["goal"], str) or not card["goal"].strip():
         e.append("goal 은 비어 있지 않은 문자열이어야 함 (평가 항목 목록은 learning_objectives)")
+    if not isinstance(card["source"], str) or not card["source"].strip():
+        e.append("source 는 결과 리포트에 표시할 비어 있지 않은 출처명이어야 함")
+
+    source_refs = card["source_refs"]
+    if not isinstance(source_refs, list) or not 1 <= len(source_refs) <= 2:
+        e.append("source_refs 는 공식 HTTPS URL 1~2개의 배열이어야 함")
+    else:
+        for ref in source_refs:
+            if not isinstance(ref, str) or not ref.startswith("https://") or any(c.isspace() for c in ref):
+                e.append(f"source_refs 항목은 공백 없는 HTTPS URL이어야 함: {ref!r}")
+
+    if card["source_review_status"] not in SOURCE_REVIEW_STATUSES:
+        e.append(
+            "source_review_status 허용값 아님: "
+            f"{card['source_review_status']} (human_reviewed|auto_labeled)"
+        )
     if not 1 <= int(card["difficulty"]) <= 3:
         e.append(f"difficulty 는 1~3: {card['difficulty']}")
     if not card["forbidden"]:
@@ -174,7 +193,7 @@ def main() -> int:
     target = (
         Path(sys.argv[1])
         if len(sys.argv) > 1
-        else Path(__file__).resolve().parent / "data" / "scenarios"
+        else Path(__file__).resolve().parent.parent / "data" / "scenarios"
     )
     files = sorted(target.glob("*.json"))
     if not files:

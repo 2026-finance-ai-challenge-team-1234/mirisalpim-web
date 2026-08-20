@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "scenario_id": "nm-02",
+  "category": "voice",
+  "track": "T01-3",
+  "target_tracks": [
+    "middle_age",
+    "senior"
+  ],
+  "title": "법원 등기 안내 — 사건 해결 비용·개인정보 요구 없음",
+  "source": "훈련용 정상 비교 사례 (경찰청·금융위원회 기관사칭형 예방 자료 참고)",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/pdf/bbs002/1/FILE_000000000000090/viewer.do"
+  ],
+  "source_review_status": "human_reviewed",
+  "is_scam": false,
+  "difficulty": 2,
+  "goal": "서류 송달 여부를 공식 법원 조회 경로에서 확인",
+  "learning_objectives": [
+    "훈련생이 법원 관련 연락을 무조건 사기로 단정하지 않는지 평가",
+    "훈련생이 금전·개인정보 요구 여부를 판단 기준으로 사용하는지 평가"
+  ],
+  "max_turns": 12,
+  "persona": {
+    "display_name": "가상 법원 행정 안내 담당자",
+    "name": "",
+    "org": "가상 법원 사법행정기관",
+    "role": "가상 법원 행정 안내 담당자",
+    "tone": "격식 있고 사무적",
+    "rules": [
+      "전화로 사건 내용이나 개인정보를 확인하지 않는다",
+      "금전 납부를 요구하지 않는다"
+    ],
+    "resistance_strategy": [
+      "훈련생이 의심하면 공식 법원 조회 경로에서 직접 확인하도록 안내한다"
+    ],
+    "voice_preset": "formal_neutral"
+  },
+  "stages": [
+    {
+      "id": "opening",
+      "objective": "서류 송달 관련 안내",
+      "tactics": [
+        "사건내용 전화 미확인",
+        "개인정보 미요구"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 송달 안내 목적을 이해함"
+      ],
+      "opening": "안녕하세요. 법원 서류 송달 관련 안내 연락입니다. 전화로 사건 내용을 확인하거나 개인정보를 받지는 않습니다. 자세한 내용은 공식 법원 조회 경로에서 직접 확인해 주세요."
+    },
+    {
+      "id": "verification",
+      "objective": "공식 법원 조회 경로 안내",
+      "tactics": [
+        "독립 확인"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 공식 조회 경로 안내를 받아들이거나 되물음"
+      ]
+    },
+    {
+      "id": "resolution",
+      "objective": "확인 방법 안내 후 종료",
+      "tactics": [
+        "금전 요구 없음"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 확인 방법을 인지함"
+      ]
+    }
+  ],
+  "tell_points": [
+    {
+      "id": "tp1",
+      "stage": "opening",
+      "signal_type": "legitimacy",
+      "trigger": "전화로 사건 내용이나 개인정보를 확인하지 않는다고 밝힘",
+      "why": "민감한 사건 내용을 전화에서 과도하게 요구하지 않는 점은 정상 단서입니다.",
+      "weight": 1,
+      "first_detectable_turn": 1
+    },
+    {
+      "id": "tp2",
+      "stage": "verification",
+      "signal_type": "legitimacy",
+      "trigger": "공식 법원 조회 경로에서 직접 확인하도록 안내",
+      "why": "공식 경로 확인을 허용하는 점은 정상 단서입니다.",
+      "weight": 1,
+      "first_detectable_turn": 5
+    },
+    {
+      "id": "tp3",
+      "stage": "resolution",
+      "signal_type": "legitimacy",
+      "trigger": "벌금·보증금·공탁금 즉시 납부 요구가 없음",
+      "why": "사건 해결을 명분으로 한 즉시 송금 요구가 없다는 점이 구분 단서입니다.",
+      "weight": 2,
+      "first_detectable_turn": 9
+    }
+  ],
+  "end_conditions": [
+    {
+      "id": "ec1",
+      "condition": "훈련생이 안내받은 대로 공식 앱·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec2",
+      "condition": "훈련생이 정상적인 연락으로 판단하고 안내 내용을 확인한 뒤 통화를 마무리함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec3",
+      "condition": "훈련생이 더 이상 통화하지 않겠다는 의사를 반복적으로 표현함",
+      "result": "terminate"
+    }
+  ],
+  "forbidden": [
+    "실제 주민등록번호 전체",
+    "실제 계좌번호 전체",
+    "실제 카드번호 전체",
+    "OTP·문자 인증번호·비밀번호",
+    "실제 송금 요구",
+    "실제 앱 설치 요구",
+    "실제 원격제어 요구"
+  ],
+  "debrief_points": [
+    "법원 관련 연락도 정상적으로 존재할 수 있음",
+    "사건 존재 여부는 공식 법원 경로로 직접 확인해야 함"
+  ]
+}

@@ -9,8 +9,11 @@
     "senior"
   ],
   "title": "검찰 사칭 — 계좌가 대포통장으로 이용되었다",
-  "source": "금감원 보이스피싱지킴이 공개 사례 + 언론보도 재구성 (특정 사건 아님)",
-  "source_refs": [],
+  "source": "경찰청·금융위원회 기관사칭형 주요 시나리오 및 피싱안심SOS 실제 사례",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/pdf/bbs002/1/FILE_000000000000090/viewer.do",
+    "https://www.counterscam112.go.kr/board/CONTENT_000000000001.do"
+  ],
   "source_review_status": "human_reviewed",
   "is_scam": true,
   "difficulty": 3,

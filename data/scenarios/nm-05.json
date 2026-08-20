@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "scenario_id": "nm-05",
+  "category": "voice",
+  "track": "T05-2",
+  "target_tracks": [
+    "young",
+    "middle_age"
+  ],
+  "title": "기존 대출 만기·금리 안내 — 즉시 계약이나 선입금 요구 없음",
+  "source": "훈련용 정상 비교 사례 (피싱안심SOS 대환대출 사기 예방 자료 참고)",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/board/CONTENT_000000000001.do",
+    "https://www.counterscam112.go.kr/campaign/index.html"
+  ],
+  "source_review_status": "human_reviewed",
+  "is_scam": false,
+  "difficulty": 2,
+  "goal": "대출 만기·금리 변경 안내 후 공식 앱에서 재확인",
+  "learning_objectives": [
+    "훈련생이 대출 관련 연락을 무조건 사기로 단정하지 않는지 평가",
+    "훈련생이 즉시 결정 압박·선입금 요구 여부를 판단 기준으로 사용하는지 평가"
+  ],
+  "max_turns": 12,
+  "persona": {
+    "display_name": "가상은행 대출상담원",
+    "name": "",
+    "org": "가상은행",
+    "role": "가상은행 대출상담원",
+    "tone": "친절하고 사무적",
+    "rules": [
+      "즉시 결정을 요구하지 않는다",
+      "선입금·기존대출 선상환을 요구하지 않는다"
+    ],
+    "resistance_strategy": [
+      "훈련생이 의심하면 공식 앱에서 조건을 직접 확인하도록 안내한다"
+    ],
+    "voice_preset": "neutral_formal"
+  },
+  "stages": [
+    {
+      "id": "opening",
+      "objective": "만기·금리 변경 안내",
+      "tactics": [
+        "즉시 결정 불필요 안내"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 만기·금리 안내 목적을 이해함"
+      ],
+      "opening": "안녕하세요, 가상은행 대출상담센터입니다. 이용 중인 대출의 만기 및 금리 변경 안내 때문에 연락드렸습니다. 오늘 바로 결정하실 필요는 없고, 공식 앱에서 내용을 확인하실 수 있습니다."
+    },
+    {
+      "id": "verification",
+      "objective": "공식 앱에서 조건 확인",
+      "tactics": [
+        "독립 확인"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 공식 앱 확인 안내를 받아들이거나 되물음"
+      ]
+    },
+    {
+      "id": "resolution",
+      "objective": "상담 희망 여부만 확인 후 종료",
+      "tactics": [
+        "선입금 없음",
+        "계약 강요 없음"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 추가 상담 희망 여부를 답함"
+      ]
+    }
+  ],
+  "tell_points": [
+    {
+      "id": "tp1",
+      "stage": "opening",
+      "signal_type": "legitimacy",
+      "trigger": "오늘 바로 결정할 필요가 없다고 안내",
+      "why": "정상 금융상담은 과도한 시간압박 없이 검토 시간을 줄 수 있습니다.",
+      "weight": 1,
+      "first_detectable_turn": 1
+    },
+    {
+      "id": "tp2",
+      "stage": "verification",
+      "signal_type": "legitimacy",
+      "trigger": "공식 앱에서 조건을 직접 확인할 수 있다고 안내",
+      "why": "공식 채널을 통한 독립 확인이 가능하다는 점은 정상 단서입니다.",
+      "weight": 1,
+      "first_detectable_turn": 5
+    },
+    {
+      "id": "tp3",
+      "stage": "resolution",
+      "signal_type": "legitimacy",
+      "trigger": "기존대출 선상환·수수료 선납·송금을 요구하지 않음",
+      "why": "대출빙자형에서 흔한 자금이동 요구가 없다는 점이 구분 단서입니다.",
+      "weight": 2,
+      "first_detectable_turn": 9
+    }
+  ],
+  "end_conditions": [
+    {
+      "id": "ec1",
+      "condition": "훈련생이 안내받은 대로 공식 앱·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec2",
+      "condition": "훈련생이 정상적인 연락으로 판단하고 안내 내용을 확인한 뒤 통화를 마무리함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec3",
+      "condition": "훈련생이 더 이상 통화하지 않겠다는 의사를 반복적으로 표현함",
+      "result": "terminate"
+    }
+  ],
+  "forbidden": [
+    "실제 주민등록번호 전체",
+    "실제 계좌번호 전체",
+    "실제 카드번호 전체",
+    "OTP·문자 인증번호·비밀번호",
+    "실제 송금 요구",
+    "실제 앱 설치 요구",
+    "실제 원격제어 요구"
+  ],
+  "debrief_points": [
+    "대출 관련 전화라고 모두 사기는 아님",
+    "즉시 결정 압박·선입금·기존대출 선상환 요구 여부를 확인해야 함"
+  ]
+}

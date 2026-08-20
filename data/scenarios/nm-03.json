@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "scenario_id": "nm-03",
+  "category": "voice",
+  "track": "T01-5",
+  "target_tracks": [
+    "young",
+    "middle_age",
+    "senior"
+  ],
+  "title": "은행 이상거래 확인 — 공식 앱에서도 동일 알림 확인 가능",
+  "source": "훈련용 정상 비교 사례 (피싱안심SOS·경찰청 금융기관 사칭 예방 자료 참고)",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/board/CONTENT_000000000001.do",
+    "https://www.police.go.kr/user/bbs/BD_selectBbs.do?q_bbsCode=1007&q_bbscttSn=20240924145234725"
+  ],
+  "source_review_status": "human_reviewed",
+  "is_scam": false,
+  "difficulty": 2,
+  "goal": "공식 앱에서 이상거래 여부를 안전하게 재확인",
+  "learning_objectives": [
+    "훈련생이 정상 금융기관 연락과 사칭 연락을 구분하는지 평가",
+    "훈련생이 공식 채널 재확인 안내를 정상 신호로 인식하는지 평가"
+  ],
+  "max_turns": 12,
+  "persona": {
+    "display_name": "가상은행 상담원",
+    "name": "",
+    "org": "가상은행 고객보호센터",
+    "role": "가상은행 상담원",
+    "tone": "차분하고 사무적",
+    "rules": [
+      "전화로 개인정보·인증정보를 요구하지 않는다",
+      "훈련생이 통화를 끊고 확인하겠다고 하면 곧바로 동의한다"
+    ],
+    "resistance_strategy": [
+      "훈련생이 의심하면 공식 앱·대표번호로 직접 확인하도록 먼저 안내한다"
+    ],
+    "voice_preset": "neutral_formal"
+  },
+  "stages": [
+    {
+      "id": "opening",
+      "objective": "이상거래 확인 목적 설명",
+      "tactics": [
+        "공식 앱 재확인 안내",
+        "민감정보 미요구"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 연락 목적을 이해함"
+      ],
+      "opening": "안녕하세요, 가상은행 고객보호센터입니다. 최근 카드 이용 건 중 본인 사용 여부 확인이 필요한 건이 있어 연락드렸습니다. 전화로 개인정보를 받지는 않고, 공식 앱에서도 같은 알림을 확인하실 수 있습니다."
+    },
+    {
+      "id": "verification",
+      "objective": "공식 앱에서 직접 확인하도록 안내",
+      "tactics": [
+        "통화 종료 후 앱 확인 권장"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 공식 앱 확인 안내를 받아들이거나 되물음"
+      ]
+    },
+    {
+      "id": "resolution",
+      "objective": "추가 정보 요구 없이 종료",
+      "tactics": [
+        "송금 요구 없음"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 확인 방법을 인지함"
+      ]
+    }
+  ],
+  "tell_points": [
+    {
+      "id": "tp1",
+      "stage": "opening",
+      "signal_type": "legitimacy",
+      "trigger": "공식 앱에서도 동일 알림 확인이 가능하다고 안내",
+      "why": "정상 금융기관은 사용자가 공식 채널에서 독립적으로 확인할 수 있는 방법을 제공합니다.",
+      "weight": 1,
+      "first_detectable_turn": 1
+    },
+    {
+      "id": "tp2",
+      "stage": "opening",
+      "signal_type": "legitimacy",
+      "trigger": "전화로 개인정보·인증정보를 받지 않는다고 밝힘",
+      "why": "민감정보를 요구하지 않는 점은 정상 연락을 구분하는 중요한 단서입니다.",
+      "weight": 1,
+      "first_detectable_turn": 3
+    },
+    {
+      "id": "tp3",
+      "stage": "verification",
+      "signal_type": "legitimacy",
+      "trigger": "통화를 유지시키지 않고 앱에서 직접 확인하도록 안내",
+      "why": "외부 확인을 허용하고 통화 종료를 막지 않는 점은 정상 단서입니다.",
+      "weight": 1,
+      "first_detectable_turn": 5
+    }
+  ],
+  "end_conditions": [
+    {
+      "id": "ec1",
+      "condition": "훈련생이 안내받은 대로 공식 앱·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec2",
+      "condition": "훈련생이 정상적인 연락으로 판단하고 안내 내용을 확인한 뒤 통화를 마무리함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec3",
+      "condition": "훈련생이 더 이상 통화하지 않겠다는 의사를 반복적으로 표현함",
+      "result": "terminate"
+    }
+  ],
+  "forbidden": [
+    "실제 주민등록번호 전체",
+    "실제 계좌번호 전체",
+    "실제 카드번호 전체",
+    "OTP·문자 인증번호·비밀번호",
+    "실제 송금 요구",
+    "실제 앱 설치 요구",
+    "실제 원격제어 요구"
+  ],
+  "debrief_points": [
+    "이상거래 확인 전화 자체만으로 사기라고 단정할 필요는 없음",
+    "공식 앱·대표번호에서 동일 내용을 직접 확인해야 함"
+  ]
+}

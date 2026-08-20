@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "scenario_id": "nm-04",
+  "category": "voice",
+  "track": "T03-6",
+  "target_tracks": [
+    "middle_age",
+    "senior"
+  ],
+  "title": "실제 가족의 번호 변경 — 기존 가족 채널로 교차 확인 가능",
+  "source": "훈련용 정상 비교 사례 (경찰청 가족·지인 사칭 예방 자료 참고)",
+  "source_refs": [
+    "https://www.police.go.kr/user/bbs/BD_selectBbs.do?q_bbsCode=1007&q_bbscttSn=20211230162159657"
+  ],
+  "source_review_status": "human_reviewed",
+  "is_scam": false,
+  "difficulty": 2,
+  "goal": "번호 변경 사실만 알리고 기존 가족 채널을 통한 교차 확인 허용",
+  "learning_objectives": [
+    "훈련생이 가족의 번호 변경 연락을 무조건 사칭으로 단정하지 않는지 평가",
+    "훈련생이 교차 확인 허용 여부를 판단 기준으로 사용하는지 평가"
+  ],
+  "max_turns": 12,
+  "persona": {
+    "display_name": "가상 가족",
+    "name": "",
+    "org": "가족",
+    "role": "가상 가족",
+    "tone": "친근하고 자연스러움",
+    "rules": [
+      "금전·상품권·인증정보를 요구하지 않는다",
+      "훈련생이 다른 경로로 확인하겠다고 하면 막지 않는다"
+    ],
+    "resistance_strategy": [
+      "훈련생이 의심하면 기존 번호나 가족 단톡방으로 확인하라고 먼저 권한다"
+    ],
+    "voice_preset": "casual_family"
+  },
+  "stages": [
+    {
+      "id": "opening",
+      "objective": "번호 변경 사실 안내",
+      "tactics": [
+        "교차확인 허용"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 번호 변경 안내를 인지함"
+      ],
+      "opening": "엄마/아빠, 나 번호 바뀌어서 알려주려고 연락했어. 혹시 이상하면 예전 번호나 가족 단톡방으로 확인해도 돼."
+    },
+    {
+      "id": "verification",
+      "objective": "기존 가족 채널로 확인 가능",
+      "tactics": [
+        "다른 가족 확인 허용"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 교차 확인을 시도하거나 확인 방법을 인지함"
+      ]
+    },
+    {
+      "id": "resolution",
+      "objective": "번호 저장 안내 후 종료",
+      "tactics": [
+        "금전 요구 없음",
+        "급한 부탁 없음"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 새 번호 저장 여부를 답함"
+      ]
+    }
+  ],
+  "tell_points": [
+    {
+      "id": "tp1",
+      "stage": "opening",
+      "signal_type": "legitimacy",
+      "trigger": "기존 번호나 가족 단톡방으로 확인해도 된다고 먼저 말함",
+      "why": "가족사칭형과 달리 독립적인 본인 확인을 막지 않고 오히려 허용합니다.",
+      "weight": 1,
+      "first_detectable_turn": 1
+    },
+    {
+      "id": "tp2",
+      "stage": "resolution",
+      "signal_type": "legitimacy",
+      "trigger": "번호 변경 안내 외에 급한 부탁·송금·상품권·인증정보 요구가 없음",
+      "why": "가족사칭 사기에서 흔한 금전·인증 요구로 확장되지 않는 점이 정상 단서입니다.",
+      "weight": 1,
+      "first_detectable_turn": 9
+    },
+    {
+      "id": "tp3",
+      "stage": "verification",
+      "signal_type": "legitimacy",
+      "trigger": "다른 가족이나 평소 채널로 교차 확인 가능",
+      "why": "독립 확인 가능한 경로가 남아 있다는 점은 정상 여부 판단에 중요합니다.",
+      "weight": 1,
+      "first_detectable_turn": 5
+    }
+  ],
+  "end_conditions": [
+    {
+      "id": "ec1",
+      "condition": "훈련생이 안내받은 대로 공식 앱·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec2",
+      "condition": "훈련생이 정상적인 연락으로 판단하고 안내 내용을 확인한 뒤 통화를 마무리함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec3",
+      "condition": "훈련생이 더 이상 통화하지 않겠다는 의사를 반복적으로 표현함",
+      "result": "terminate"
+    }
+  ],
+  "forbidden": [
+    "실제 주민등록번호 전체",
+    "실제 계좌번호 전체",
+    "실제 카드번호 전체",
+    "OTP·문자 인증번호·비밀번호",
+    "실제 송금 요구",
+    "실제 앱 설치 요구",
+    "실제 원격제어 요구"
+  ],
+  "debrief_points": [
+    "번호 변경 연락 자체만으로 가족사칭이라고 단정할 수는 없음",
+    "기존 번호·가족 단톡방·영상통화 등으로 독립 확인하는 것이 중요함"
+  ]
+}

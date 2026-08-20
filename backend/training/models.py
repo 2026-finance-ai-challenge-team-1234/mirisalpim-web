@@ -47,8 +47,11 @@ class Scenario(models.Model):
     #: 이 시나리오를 제공할 연령 트랙들
     target_tracks = models.JSONField(default=list, validators=[validate_target_tracks])
     title = models.CharField(max_length=200)
+    #: 마지막 훈련 결과 리포트에 표시할 짧은 출처명. 분석 메모나 내부 경로는 넣지 않는다
     source = models.TextField()
+    #: 결과 리포트의 공식 자료 링크. 공식 HTTPS URL 문자열 1~2개만 저장한다
     source_refs = models.JSONField(default=list, blank=True)
+    #: 출처 검수 상태이며 내부 관리용이다. 결과 리포트에는 노출하지 않는다
     source_review_status = models.CharField(
         max_length=20, choices=REVIEW_STATUS_CHOICES, default="human_reviewed"
     )

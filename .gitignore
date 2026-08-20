@@ -1,0 +1,12 @@
+# 루트 공용 — 개별 backend/frontend/.gitignore 와 별개로, ai_core/data/ 등
+# 저장소 최상위에 걸쳐 있는 항목을 여기서 관리한다.
+
+__pycache__/
+*.pyc
+.env
+.DS_Store
+*.log
+
+# RAG 코퍼스 원본 — 대용량·저작권 우려로 git 제외. data/README.md 참고.
+# processed/ 는 추적한다(가공 결과물, 상대적으로 작고 재현 근거가 됨).
+data/corpus/raw/
