@@ -1,28 +1,8 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-// track 코드(예: "T01-1")의 앞 3글자(중분류)만 보고 제목/아이콘 등을 붙여주는 로컬 매핑표.
-// 백엔드 응답엔 title이 없어서(설계 문서 기준) 프론트에서 직접 채움.
-// recommendation_engine.py의 CATEGORY_META와 내용이 같아야 함 — 로직 바뀌면 여기도 같이 바꿀 것.
-const CATEGORY_META = {
-  T01: { title: "전화 기반 기관사칭 대응 훈련" },
-  T02: { title: "전화 기반 금융사기 대응 훈련" },
-  T03: { title: "자녀·가족 사칭 전화 대응 훈련" },
-  T04: { title: "수사기관 사건 연루 전화 대응 훈련" },
-  T05: { title: "대출·취업 사기 전화 대응 훈련" },
-  T06: { title: "원격제어·악성앱 설치 유도 대응 훈련" },
-  T07: { title: "택배·생활 사칭 전화 대응 훈련" },
-  T08: { title: "관계형성형 사기 대응 훈련" },
-  S01: { title: "문자 기반 기관사칭 대응 훈련" },
-  S02: { title: "자녀·가족 사칭 문자 대응 훈련" },
-  S03: { title: "택배·배송 스미싱 대응 훈련" },
-  S04: { title: "금융·결제 스미싱 대응 훈련" },
-  S05: { title: "공공·행정 스미싱 대응 훈련" },
-  S06: { title: "생활·경조사 스미싱 대응 훈련" },
-  S07: { title: "악성앱·피싱 링크 대응 훈련" },
-  S08: { title: "투자·대출 스미싱 대응 훈련" },
-};
-
+// 채널(voice/smishing) 값에 따른 표시 라벨. title/description/reasons는 이제
+// 백엔드 응답에 다 포함되어 있어서, 여기선 화면 표시용 라벨만 최소한으로 관리함.
 const CHANNEL_META = {
   voice: { label: "📞 음성 통화 (Voice)", isVoice: true },
   smishing: { label: "📱 문자 URL (SMS)", isVoice: false },
@@ -47,8 +27,6 @@ export default function Recommendation() {
   const savedUser = localStorage.getItem("userSurveyData");
   const userName = savedUser ? JSON.parse(savedUser).userName || "고객" : "고객";
 
-  const midCategory = recommendation.track?.split("-")[0]; // "T01-1" -> "T01"
-  const meta = CATEGORY_META[midCategory] || { title: "맞춤 훈련" };
   const channelMeta = CHANNEL_META[recommendation.category] || CHANNEL_META.voice;
 
   const handleStartTraining = () => setShowNoticeModal(true);
@@ -104,7 +82,7 @@ export default function Recommendation() {
               </span>
             </div>
 
-            <h3 className="text-base font-extrabold text-[#191F28] mb-1.5">{meta.title}</h3>
+            <h3 className="text-base font-extrabold text-[#191F28] mb-1.5">{recommendation.title}</h3>
             <p className="text-xs text-gray-600 leading-relaxed mb-4">{recommendation.description}</p>
 
             <div className="bg-white/80 rounded-xl p-3 border border-blue-100">

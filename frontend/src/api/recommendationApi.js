@@ -4,25 +4,11 @@
 // 실제 백엔드가 아직 없거나 호출이 실패하면 자동으로 목업 데이터로 대체합니다.
 // 백엔드가 준비되면 이 파일은 손댈 필요 없이 자동으로 실제 데이터를 씁니다.
 
-const API_BASE = "/api/v1";
+import { apiPost } from "./client";
 
 export async function fetchRecommendation(surveyAnswers) {
   try {
-    const res = await fetch(`${API_BASE}/recommendations`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "Content-Type": "application/json",
-        // TODO: 백엔드 CSRF 적용되면 여기에 X-CSRFToken 헤더 추가
-      },
-      body: JSON.stringify(surveyAnswers),
-    });
-
-    if (!res.ok) {
-      throw new Error(`API 응답 실패: ${res.status}`);
-    }
-
-    return await res.json();
+    return await apiPost("/recommendations", surveyAnswers);
   } catch (err) {
     console.warn("[recommendationApi] 백엔드 호출 실패, 목업 데이터로 대체합니다:", err.message);
     return mockRecommendation(surveyAnswers);
@@ -43,6 +29,7 @@ function mockRecommendation(answers) {
     return {
       category: "voice",
       track: "T01-1",
+      title: "전화 기반 기관사칭 대응 훈련",
       description: "검찰·금융감독원을 사칭한 압박형 음성 통화에 대응하는 훈련입니다.",
       reasons: ["(목업) 백엔드 연동 전 임시 데이터입니다.", "기관 사칭 음성 연락 우려"],
       suitability: "90",
@@ -52,6 +39,7 @@ function mockRecommendation(answers) {
   return {
     category: "smishing",
     track: "S03-1",
+    title: "택배·배송 스미싱 대응 훈련",
     description: "택배 조회를 가장한 문자 속 악성 링크에 대응하는 훈련입니다.",
     reasons: ["(목업) 백엔드 연동 전 임시 데이터입니다.", "택배·배송 관련 우려"],
     suitability: "88",
