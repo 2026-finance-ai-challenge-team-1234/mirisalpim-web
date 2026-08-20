@@ -1,22 +1,45 @@
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { fetchRecommendation } from "../api/recommendationApi";
+
+const MIN_LOADING_MS = 1500; // 응답이 너무 빨리 와도 로딩 연출이 순간적으로 사라지지 않도록 최소 대기시간 보장
 
 export default function SurveyLoading() {
   const navigate = useNavigate();
+  const { state } = useLocation();
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      navigate("/recommendation");
-    }, 2200);
+    // Survey에서 넘어온 게 아니라 새로고침/직접 URL 접근이면 답변이 없음 → 설문으로 되돌림
+    const surveyAnswers = state?.surveyAnswers;
+    if (!surveyAnswers) {
+      navigate("/survey", { replace: true });
+      return;
+    }
 
-    return () => clearTimeout(timer);
-  }, [navigate]);
+    let cancelled = false;
+
+    const run = async () => {
+      const [recommendation] = await Promise.all([
+        fetchRecommendation(surveyAnswers),
+        new Promise((resolve) => setTimeout(resolve, MIN_LOADING_MS)),
+      ]);
+
+      if (!cancelled) {
+        navigate("/recommendation", { state: { recommendation, surveyAnswers }, replace: true });
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [state, navigate]);
 
   return (
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl flex flex-col justify-center items-center p-6 text-center relative overflow-hidden">
-        
-        {/* 로딩 애니메이션 */}
+
         <div className="relative w-20 h-20 mb-6 flex items-center justify-center">
           <div className="absolute w-full h-full border-4 border-blue-100 border-t-[#0052CC] rounded-full animate-spin"></div>
           <span className="text-2xl">✨</span>
@@ -34,7 +57,6 @@ export default function SurveyLoading() {
             ✨ 규칙 기반 추천 알고리즘 가동 중...
           </span>
         </div>
-
       </div>
     </div>
   );
