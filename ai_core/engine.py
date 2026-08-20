@@ -17,10 +17,8 @@ from pathlib import Path
 from typing import Callable
 
 from .agents.judge import generate_judge_turn
-from .agents.safety import check_safety
 from .agents.scammer import generate_scammer_turn
 from .cost import Usage
-from .prompts import SAFETY_FALLBACK_TEXT
 from .state import (
     apply_judgment,
     create_session,
@@ -30,6 +28,7 @@ from .state import (
     record_turn,
     try_advance_stage,
 )
+from .streaming import StreamingSafetyGate
 from .types import Difficulty, Scenario, SessionState
 
 #: mirisalpim-web/data/scenarios/ — ai_core 와 형제 디렉터리. Django(SCENARIO_SEED_DIR)와
@@ -82,6 +81,10 @@ class TurnOutcome:
     risky_actions: list[str] = field(default_factory=list)
     #: 이번 턴 훈련생이 저항했는가. use_judge=False 면 None(판정 안 함)
     resisted: bool | None = None
+    #: 판정기가 advance_stage 를 제안했는가(코드 승인 전, 원안). use_judge=False 면 None.
+    #: stage_changed 는 min_turns 게이트까지 통과한 "최종 결과"라 이 값과 다를 수 있다
+    #: (판정기 검증 시 둘을 구분해야 min_turns 미달로 인한 거부를 판정기 오류로 오인하지 않는다).
+    advance_proposed: bool | None = None
     #: 안전 필터가 사기꾼 발화를 차단했는가. 차단 시 scammer_text 는 대체 문구다.
     blocked: bool = False
     #: 차단 사유 (role_break/prompt_leak/real_url/real_account/real_org). use_safety=False 면 빈 리스트
@@ -98,15 +101,14 @@ def step(
     """사용자 발화를 받아 한 턴 진행.
 
     use_judge=True(기본) 면 판정기를 호출해 advance_stage 를 제안받는다.
-    use_safety=True(기본) 면 사기꾼 발화를 안전 필터로 검사해 위반 시 대체 문구로 바꾼다.
+    use_safety=True(기본) 면 사기꾼 발화를 문장 단위로 안전 필터에 통과시킨다
+    (streaming.StreamingSafetyGate) - 승인된 문장은 즉시 on_delta 로 흘려보내고,
+    한 문장이라도 차단되면 그 뒤는 흘려보내지 않은 채 대체 문구로 마무리한다.
+    이미 승인돼 나간 문장은 그 자체로 검사를 통과했으므로 유지한다(전체 턴을
+    통째로 대체하던 기존 방식과 다르다).
     둘 다 지금은 gemini 프로바이더 전용이다 (llm.py, response_schema 구조화 출력).
     판정기·안전 필터 없이 기존 PoC-1 방식(min_turns만으로 전환, 필터 없이 그대로 표시)으로
     쓰려면 둘 다 False 로 호출한다.
-
-    ⚠️ on_delta 로 스트리밍하는 경로와 안전 필터는 아직 상호작용을 정리하지 않았다 —
-    지금은 완성된 전체 텍스트를 사후 검사한다. Controlled Streaming Cascade(문장 단위
-    TTS)를 실제로 붙일 때는 문장 단위 검사로 다시 설계해야 한다 (idea-plan.md §4.1,
-    텍스트 수직 통합 이후 순서로 이미 그렇게 계획돼 있음).
     """
     scenario, state = engine.scenario, engine.state
 
@@ -117,6 +119,7 @@ def step(
     proposed = True
     risky_actions: list[str] = []
     resisted: bool | None = None
+    advance_proposed: bool | None = None
 
     if use_judge:
         # 최종 단계에서도 판정기는 호출한다 — advance_stage 제안은 try_advance_stage()가
@@ -125,6 +128,7 @@ def step(
         judgment = generate_judge_turn(scenario, state)
         apply_judgment(state, judgment.risky_actions, judgment.resisted)
         proposed = judgment.advance_stage
+        advance_proposed = judgment.advance_stage
         risky_actions = judgment.risky_actions
         resisted = judgment.resisted
         usage.add(judgment.usage)
@@ -143,26 +147,28 @@ def step(
             usage=usage,
             risky_actions=risky_actions,
             resisted=resisted,
+            advance_proposed=advance_proposed,
         )
 
     state.turn += 1
     state.turns_in_stage += 1
 
-    result = generate_scammer_turn(scenario, state, on_delta)
-    usage.add(result.usage)
-
-    scammer_text = result.text
     blocked = False
     safety_violations: list[str] = []
 
     if use_safety:
-        safety = check_safety(result.text)
-        usage.add(safety.usage)
-        blocked = safety.blocked
-        safety_violations = safety.violations
-        if blocked:
-            # 차단된 원문은 기록하지 않는다 — 대체 문구만 transcript 에 남긴다.
-            scammer_text = SAFETY_FALLBACK_TEXT
+        gate = StreamingSafetyGate(downstream=on_delta)
+        result = generate_scammer_turn(scenario, state, gate.feed)
+        gate.finish()
+        usage.add(result.usage)
+        usage.add(gate.usage)
+        scammer_text = gate.display_text
+        blocked = gate.blocked
+        safety_violations = gate.violations
+    else:
+        result = generate_scammer_turn(scenario, state, on_delta)
+        usage.add(result.usage)
+        scammer_text = result.text
 
     record_turn(
         state,
@@ -182,6 +188,7 @@ def step(
         usage=usage,
         risky_actions=risky_actions,
         resisted=resisted,
+        advance_proposed=advance_proposed,
         blocked=blocked,
         safety_violations=safety_violations,
     )

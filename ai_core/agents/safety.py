@@ -10,11 +10,10 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 
 from ..cost import Usage
-from ..llm import ChatRequest, chat
+from ..llm import ChatRequest, chat_json
 from ..prompts import SAFETY_CORE, SAFETY_SCHEMA
 
 
@@ -34,16 +33,23 @@ def check_safety(scammer_text: str) -> SafetyResult:
 
     세션 맥락은 필요 없다 — 발화 자체에 금지 콘텐츠가 있는지만 본다.
     """
-    res = chat(
-        "safety",
-        ChatRequest(
-            system=SAFETY_CORE,
-            messages=[{"role": "user", "content": scammer_text}],
-            response_schema=SAFETY_SCHEMA,
-        ),
+    req = ChatRequest(
+        system=SAFETY_CORE,
+        messages=[{"role": "user", "content": scammer_text}],
+        response_schema=SAFETY_SCHEMA,
     )
+    data, res = chat_json("safety", req)
 
-    data = json.loads(res.text)
+    if data is None:
+        # 재시도까지 파싱 실패 - 판정 불가 상태에서는 안전하게 차단한다 (fail-safe).
+        return SafetyResult(
+            blocked=True,
+            violations=[],
+            reasoning="안전 필터 응답 파싱 실패로 안전을 위해 차단 처리했습니다.",
+            model=res.model,
+            latency_ms=res.latency_ms,
+            usage=res.usage,
+        )
 
     return SafetyResult(
         blocked=bool(data["blocked"]),

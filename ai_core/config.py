@@ -17,10 +17,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-# .env 로딩 — Django(backend/)가 이미 쓰는 .env 를 그대로 공유한다.
+# .env 로딩 — mirisalpim-web/ 루트의 .env 를 읽는다 (.env.example 과 같은 위치).
 # ai_core 는 Django 를 import 하지 않지만, 실제로는 Django 프로세스 안에서
 # 호출되므로 환경변수를 두 곳에서 따로 관리하지 않기 위한 실용적 선택이다.
-_ENV_PATH = Path(__file__).resolve().parent.parent / "backend" / ".env"
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 if _ENV_PATH.exists():
     for _line in _ENV_PATH.read_text(encoding="utf-8").splitlines():
         _line = _line.strip()

@@ -84,6 +84,27 @@ def chat(
     return fn(req, model, cfg.max_tokens, cfg.roleplay, on_delta)
 
 
+def chat_json(role: str, req: ChatRequest) -> tuple[dict | None, ChatResult]:
+    """chat() 을 부르고 res.text 를 JSON으로 파싱한다 (response_schema 구조화 출력 전용).
+
+    구조화 출력이라도 스트리밍 조합 과정에서 가끔 깨진 이스케이프가 섞여 나올 수 있다
+    (실측: json.JSONDecodeError, 재현 빈도 낮음). 1회 재시도하고, 그래도 파싱에 실패하면
+    (None, 마지막 ChatResult) 를 돌려준다 - 무엇을 기본값으로 볼지(차단/보류 등)는
+    호출부(판정기·안전 필터)가 자기 도메인에 맞는 fail-safe 값으로 정한다.
+    """
+    res = chat(role, req)
+    try:
+        return json.loads(res.text), res
+    except json.JSONDecodeError:
+        pass
+
+    res = chat(role, req)
+    try:
+        return json.loads(res.text), res
+    except json.JSONDecodeError:
+        return None, res
+
+
 # ─────────────────────── Anthropic (후보 경로) ───────────────────────
 
 _client = None
@@ -254,6 +275,12 @@ def _chat_ollama(
 
 
 # ─────────────────────── Gemini (Google AI Studio) ───────────────────────
+
+# google-genai 가 매 generate_content_stream 호출마다 찍는 "AFC는 Chat.send_message_stream을
+# 쓰라"는 안내성 로그를 끈다 - 우리는 도구 호출(tool/function calling)을 쓰지 않아 해당 없음.
+import logging as _logging
+
+_logging.getLogger("google_genai.models").setLevel(_logging.ERROR)
 
 _gemini_client = None
 

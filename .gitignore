@@ -10,3 +10,7 @@ __pycache__/
 # RAG 코퍼스 원본 — 대용량·저작권 우려로 git 제외. data/README.md 참고.
 # processed/ 는 추적한다(가공 결과물, 상대적으로 작고 재현 근거가 됨).
 data/corpus/raw/
+
+# 정확도 검증 라벨링 결과 (ai_core/eval) — 실행마다 생성되는 로그, 재현 근거는
+# 커밋 메시지·PR 설명에 정확도 수치로 남긴다.
+ai_core/eval/results/
