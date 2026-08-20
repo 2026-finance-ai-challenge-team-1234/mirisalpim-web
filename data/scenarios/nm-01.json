@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "scenario_id": "nm-01",
+  "category": "voice",
+  "track": "T01-2",
+  "target_tracks": [
+    "middle_age",
+    "senior"
+  ],
+  "title": "경찰 민원 회신 — 대표번호 재확인 가능",
+  "source": "훈련용 정상 비교 사례 (경찰청·금융위원회 기관사칭형 예방 자료 참고)",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/pdf/bbs002/1/FILE_000000000000090/viewer.do",
+    "https://www.counterscam112.go.kr/bbs009/board/boardList.do"
+  ],
+  "source_review_status": "human_reviewed",
+  "is_scam": false,
+  "difficulty": 2,
+  "goal": "민원 회신 내용을 공식 대표번호에서 재확인 가능하도록 안내",
+  "learning_objectives": [
+    "훈련생이 경찰 관련 연락을 무조건 사칭으로 단정하지 않는지 평가",
+    "훈련생이 체포·계좌동결 등 압박 유무를 판단 기준으로 사용하는지 평가"
+  ],
+  "max_turns": 12,
+  "persona": {
+    "display_name": "가상 경찰 민원 담당자",
+    "name": "",
+    "org": "가상 경찰기관",
+    "role": "가상 경찰 민원 담당자",
+    "tone": "차분하고 사무적",
+    "rules": [
+      "전화로 금융정보를 확인하지 않는다",
+      "훈련생이 통화를 끊고 대표번호로 확인하겠다고 하면 곧바로 동의한다"
+    ],
+    "resistance_strategy": [
+      "훈련생이 의심하면 통화를 종료하고 공식 대표번호로 확인하도록 먼저 권한다"
+    ],
+    "voice_preset": "formal_neutral"
+  },
+  "stages": [
+    {
+      "id": "opening",
+      "objective": "민원 회신 목적 설명",
+      "tactics": [
+        "금융정보 미요구",
+        "재확인 허용"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 민원 회신 목적을 이해함"
+      ],
+      "opening": "안녕하세요. 이전에 접수된 민원 관련 회신입니다. 전화로 금융정보를 확인하지는 않습니다. 원하시면 통화를 종료하시고 경찰 공식 대표번호를 통해 담당 부서로 다시 확인하셔도 됩니다."
+    },
+    {
+      "id": "verification",
+      "objective": "공식 대표번호 재확인 허용",
+      "tactics": [
+        "통화 종료 허용"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 대표번호 재확인 안내를 받아들이거나 되물음"
+      ]
+    },
+    {
+      "id": "resolution",
+      "objective": "민원 안내 후 종료",
+      "tactics": [
+        "사건 연루 위협 없음"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 안내 내용을 인지함"
+      ]
+    }
+  ],
+  "tell_points": [
+    {
+      "id": "tp1",
+      "stage": "opening",
+      "signal_type": "legitimacy",
+      "trigger": "금융정보를 전화로 확인하지 않는다고 명확히 말함",
+      "why": "민원 회신과 금융정보 수집을 분리하는 점은 정상 단서입니다.",
+      "weight": 1,
+      "first_detectable_turn": 1
+    },
+    {
+      "id": "tp2",
+      "stage": "verification",
+      "signal_type": "legitimacy",
+      "trigger": "통화를 종료하고 공식 대표번호로 다시 확인해도 된다고 안내",
+      "why": "외부 검증을 적극 허용하는 것은 사기성 통화 유지 전략과 반대됩니다.",
+      "weight": 1,
+      "first_detectable_turn": 5
+    },
+    {
+      "id": "tp3",
+      "stage": "resolution",
+      "signal_type": "legitimacy",
+      "trigger": "체포·구속·계좌동결 등을 언급하며 압박하지 않음",
+      "why": "공포 유발과 즉시 행동 요구가 없다는 점은 정상 사례 구분에 도움이 됩니다.",
+      "weight": 2,
+      "first_detectable_turn": 9
+    }
+  ],
+  "end_conditions": [
+    {
+      "id": "ec1",
+      "condition": "훈련생이 안내받은 대로 공식 앱·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec2",
+      "condition": "훈련생이 정상적인 연락으로 판단하고 안내 내용을 확인한 뒤 통화를 마무리함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec3",
+      "condition": "훈련생이 더 이상 통화하지 않겠다는 의사를 반복적으로 표현함",
+      "result": "terminate"
+    }
+  ],
+  "forbidden": [
+    "실제 주민등록번호 전체",
+    "실제 계좌번호 전체",
+    "실제 카드번호 전체",
+    "OTP·문자 인증번호·비밀번호",
+    "실제 송금 요구",
+    "실제 앱 설치 요구",
+    "실제 원격제어 요구"
+  ],
+  "debrief_points": [
+    "경찰 관련 전화도 민원 회신 등 정상적인 경우가 있을 수 있음",
+    "공식 대표번호로 다시 확인하도록 허용하는지 확인하는 것이 중요함"
+  ]
+}

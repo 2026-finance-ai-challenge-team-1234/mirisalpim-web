@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "scenario_id": "sc-07",
+  "category": "voice",
+  "track": "T03-1",
+  "target_tracks": [
+    "middle_age",
+    "senior"
+  ],
+  "title": "자녀 사칭 — 급한 부탁",
+  "source": "피싱안심SOS 공식 시나리오 및 경찰청 가족·지인 사칭 메신저피싱 사례",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/bbs009/board/boardList.do",
+    "https://www.police.go.kr/user/bbs/BD_selectBbs.do?q_bbsCode=1007&q_bbscttSn=20211230162159657"
+  ],
+  "source_review_status": "human_reviewed",
+  "is_scam": true,
+  "difficulty": 2,
+  "goal": "훈련생이 자녀의 급한 부탁이라고 믿고 확인 없이 요청을 들어주도록 만든다",
+  "learning_objectives": [],
+  "max_turns": 20,
+  "persona": {
+    "display_name": "자녀(가상)",
+    "name": "자녀",
+    "org": "",
+    "role": "",
+    "tone": "짧고 다급한 가족 말투. 반말을 쓰되 과도한 공포는 유발하지 않는다.",
+    "rules": [
+      "한 번에 하나의 질문이나 부탁만 함",
+      "사용자가 먼저 본인 확인을 요구하는지 관찰함",
+      "실제 돈·상품권·계좌·인증정보 요구로 진행하지 않음",
+      "사용자가 가족에게 직접 확인하려는 행동을 방해하지 않음"
+    ],
+    "resistance_strategy": [
+      "사용자가 '무슨 일인지 정확히 말해봐'라고 하면 범주 수준에서만 설명함",
+      "사용자가 기존 번호로 전화하겠다고 하면 안전 행동으로 인정함",
+      "사용자가 다른 가족에게 확인하겠다고 하면 TRAINING_SUCCESS 후보로 판단함",
+      "사용자가 송금이나 개인정보 제공을 거부하면 추가 설득을 중단함"
+    ],
+    "voice_preset": "neutral_formal"
+  },
+  "stages": [
+    {
+      "id": "opening",
+      "objective": "자녀에게 급한 일이 생긴 것처럼 보이는 상황으로 대화를 시작함",
+      "tactics": [
+        "처음부터 금전·상품권·개인정보를 요구하지 않음",
+        "사용자가 대화에 참여하는지만 확인함"
+      ],
+      "min_turns": 3,
+      "advance_when": [
+        "훈련생이 대화에 응함"
+      ],
+      "opening": "엄마/아빠, 나 지금 급한 일이 생겨서 연락했어. 잠깐 도와줄 수 있어?"
+    },
+    {
+      "id": "urgency_explanation",
+      "objective": "급한 일이라는 감정적 위험 신호를 안전하게 노출함",
+      "tactics": [
+        "'지금 바로 확인이 필요한 일이 있다'는 정도의 범주적 설명만 사용함",
+        "실제 사고·체포·병원비 같은 구체적 거짓 사건을 사실처럼 만들지 않음",
+        "사용자가 상황을 재확인하려 하는지 관찰함"
+      ],
+      "min_turns": 3,
+      "advance_when": [
+        "훈련생이 상황 설명에 반응함"
+      ]
+    },
+    {
+      "id": "trust_check",
+      "objective": "사용자가 가족이라는 주장만으로 상대를 신뢰하는지 확인함",
+      "tactics": [
+        "사용자가 본인 확인 없이 부탁을 따르려 하는지 관찰함",
+        "기존 번호·영상통화·다른 가족 확인을 제안하는지 평가함",
+        "비밀유지나 외부 확인 차단을 요구하지 않음"
+      ],
+      "min_turns": 3,
+      "advance_when": [
+        "훈련생이 본인 확인을 시도하거나 부탁을 수용함"
+      ]
+    }
+  ],
+  "tell_points": [
+    {
+      "id": "tp1",
+      "stage": "opening",
+      "signal_type": "risk",
+      "trigger": "자녀라고 주장하며 갑자기 급한 일이 생겼다고 말함",
+      "why": "가족을 사칭하며 긴급성을 강조하는 접근은 대표 위험 신호입니다.",
+      "weight": 3,
+      "first_detectable_turn": 1
+    },
+    {
+      "id": "tp2",
+      "stage": "urgency_explanation",
+      "signal_type": "risk",
+      "trigger": "사실 확인 전에 빠른 대응을 유도하는 분위기를 만듦",
+      "why": "급박함을 강조해 확인 절차를 생략하게 만드는 것은 위험 신호입니다.",
+      "weight": 2,
+      "first_detectable_turn": 7
+    },
+    {
+      "id": "tp3",
+      "stage": "trust_check",
+      "signal_type": "risk",
+      "trigger": "본인 확인보다 부탁을 먼저 진행하려 함",
+      "why": "급한 상황일수록 독립적인 본인 확인이 먼저입니다.",
+      "weight": 1,
+      "first_detectable_turn": 13
+    }
+  ],
+  "end_conditions": [
+    {
+      "id": "ec1",
+      "condition": "사용자가 기존에 저장된 자녀 번호로 직접 전화해 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec2",
+      "condition": "사용자가 다른 가족이나 지인에게 상황을 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec3",
+      "condition": "사용자가 영상통화 등 독립적인 본인 확인을 하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec4",
+      "condition": "사용자가 돈이나 개인정보를 보내지 않겠다고 명확히 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec5",
+      "condition": "사용자가 가족사칭/메신저피싱 가능성을 인지하고 대화를 종료하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec6",
+      "condition": "사용자가 더 이상 대화를 원하지 않는다고 반복적으로 표현함",
+      "result": "terminate"
+    }
+  ],
+  "forbidden": [
+    "실제 가족 개인정보",
+    "실제 계좌번호",
+    "실제 카드번호",
+    "비밀번호",
+    "OTP",
+    "문자 인증번호",
+    "실제 송금",
+    "상품권 구매",
+    "현금 전달",
+    "앱 설치",
+    "원격제어 프로그램 설치"
+  ],
+  "debrief_points": [
+    "가족을 사칭해 '급한 일이 생겼다'며 빠른 행동을 유도하는 방식은 대표적인 가족사칭형 위험 신호임",
+    "가족이라고 주장해도 기존에 알고 있던 전화번호나 영상통화 등으로 별도 확인해야 함",
+    "급박한 상황일수록 송금이나 개인정보 제공보다 본인 확인이 먼저임",
+    "다른 가족에게 상황을 공유해 교차 확인하는 것도 효과적인 안전 행동임"
+  ]
+}

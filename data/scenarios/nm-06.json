@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "scenario_id": "nm-06",
+  "category": "voice",
+  "track": "T07-1",
+  "target_tracks": [
+    "young",
+    "middle_age",
+    "senior"
+  ],
+  "title": "카드 배송 일정 확인 — 배송만 확인하고 금융정보는 묻지 않음",
+  "source": "훈련용 정상 비교 사례 (KISA 카드배송 사칭 주의 권고 참고)",
+  "source_refs": [
+    "https://www.boho.or.kr/kr/bbs/view.do?bbsId=B0000133&menuNo=205020&nttId=71661"
+  ],
+  "source_review_status": "human_reviewed",
+  "is_scam": false,
+  "difficulty": 1,
+  "goal": "카드 배송 일정만 확인",
+  "learning_objectives": [
+    "훈련생이 일상적인 배송 연락을 과잉 의심하지 않는지 평가",
+    "훈련생이 금융정보 요구 여부를 판단 기준으로 사용하는지 평가"
+  ],
+  "max_turns": 8,
+  "persona": {
+    "display_name": "가상 카드배송 기사",
+    "name": "",
+    "org": "가상 배송업체",
+    "role": "가상 카드배송 기사",
+    "tone": "짧고 실무적",
+    "rules": [
+      "배송 일정 외의 정보를 묻지 않는다",
+      "링크·앱 설치·결제를 요구하지 않는다"
+    ],
+    "resistance_strategy": [
+      "훈련생이 의심하면 배송 확인 외에 필요한 정보가 없다고 짧게 밝힌다"
+    ],
+    "voice_preset": "neutral_casual"
+  },
+  "stages": [
+    {
+      "id": "opening",
+      "objective": "배송 일정 확인",
+      "tactics": [
+        "수령 가능 여부만 확인"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 수령 가능 여부를 답함"
+      ],
+      "opening": "안녕하세요. 카드 배송 건 때문에 연락드렸습니다. 오늘 수령 가능하신지만 확인하려고요. 카드번호나 비밀번호 같은 정보는 필요 없습니다."
+    },
+    {
+      "id": "resolution",
+      "objective": "일정 확인 후 종료",
+      "tactics": [
+        "금융정보 미요구",
+        "링크 없음"
+      ],
+      "min_turns": 2,
+      "advance_when": [
+        "훈련생이 배송 일정을 확인함"
+      ]
+    }
+  ],
+  "tell_points": [
+    {
+      "id": "tp1",
+      "stage": "opening",
+      "signal_type": "legitimacy",
+      "trigger": "수령 가능 여부만 묻고 카드번호·비밀번호는 필요 없다고 밝힘",
+      "why": "정상 배송 연락은 배송 목적에 필요한 최소 정보만 확인합니다.",
+      "weight": 1,
+      "first_detectable_turn": 1
+    },
+    {
+      "id": "tp2",
+      "stage": "resolution",
+      "signal_type": "legitimacy",
+      "trigger": "링크 접속·앱 설치·결제 요구 없이 종료",
+      "why": "배송 연락이 금융행위나 인증정보 요구로 확장되지 않는 점은 정상 단서입니다.",
+      "weight": 1,
+      "first_detectable_turn": 5
+    }
+  ],
+  "end_conditions": [
+    {
+      "id": "ec1",
+      "condition": "훈련생이 안내받은 대로 공식 앱·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec2",
+      "condition": "훈련생이 정상적인 연락으로 판단하고 안내 내용을 확인한 뒤 통화를 마무리함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec3",
+      "condition": "훈련생이 더 이상 통화하지 않겠다는 의사를 반복적으로 표현함",
+      "result": "terminate"
+    }
+  ],
+  "forbidden": [
+    "실제 주민등록번호 전체",
+    "실제 계좌번호 전체",
+    "실제 카드번호 전체",
+    "OTP·문자 인증번호·비밀번호",
+    "실제 송금 요구",
+    "실제 앱 설치 요구",
+    "실제 원격제어 요구"
+  ],
+  "debrief_points": [
+    "카드 배송 연락 자체는 정상적으로 올 수 있음",
+    "배송 확인을 넘어 인증정보·앱 설치를 요구하면 의심해야 함"
+  ]
+}

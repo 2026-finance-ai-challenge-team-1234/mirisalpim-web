@@ -36,7 +36,7 @@ def check(label: str, cond: bool, detail: str = "") -> None:
         failed += 1
 
 
-path = Path(__file__).resolve().parent / "data" / "scenarios" / "sc-02.json"
+path = Path(__file__).resolve().parent.parent / "data" / "scenarios" / "sc-02.json"
 scenario = Scenario.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
 print("\n시나리오 스키마")

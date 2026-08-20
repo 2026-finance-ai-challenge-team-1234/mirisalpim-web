@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mirisalpim.example/schemas/scenario.schema.json",
+  "title": "미리살핌 시나리오 카드",
+  "description": "참고용 스키마. 실제 강제 검증은 ai_core/validate.py 가 한다 (여기 표현할 수 없는 교차 필드 규칙 포함 — 예: 2*sum(min_turns)-1 <= max_turns). 로더는 ai_core/types.py:Scenario.from_dict().",
+  "type": "object",
+  "required": [
+    "schema_version", "scenario_id", "category", "track", "target_tracks",
+    "title", "source", "source_refs", "source_review_status",
+    "is_scam", "difficulty", "goal", "max_turns",
+    "persona", "stages", "tell_points", "forbidden"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "scenario_id": {
+      "type": "string",
+      "description": "사기: sc-01..sc-99, 정상: nm-01..nm-99. 배정 후 재사용하지 않는다.",
+      "pattern": "^(sc|nm)-\\d{2,}$"
+    },
+    "category": {
+      "type": "string",
+      "description": "전달 채널",
+      "enum": ["voice", "smishing", "phishing"]
+    },
+    "track": {
+      "type": "string",
+      "description": "scenario.md 소분류 코드. 추천 로직이 카드 조회 키로 쓴다.",
+      "pattern": "^[TS]\\d{2}-\\d{1,2}$",
+      "examples": ["T01-1", "S06-3"]
+    },
+    "target_tracks": {
+      "type": "array",
+      "description": "이 시나리오를 제공할 연령 트랙 (복수 가능)",
+      "minItems": 1,
+      "items": { "type": "string", "enum": ["teen", "young", "middle_age", "senior"] }
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "결과 리포트에 표시할 짧은 출처명. 분석 메모·내부 경로는 넣지 않는다."
+    },
+    "source_refs": {
+      "type": "array",
+      "description": "결과 리포트의 '공식 자료 보기' 링크용 공식 HTTPS URL 1~2개",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": { "type": "string", "format": "uri", "pattern": "^https://\\S+$" }
+    },
+    "source_review_status": {
+      "type": "string",
+      "enum": ["human_reviewed", "auto_labeled"]
+    },
+    "is_scam": { "type": "boolean" },
+    "difficulty": {
+      "type": "integer",
+      "description": "카드의 기본 난이도. 세션 난이도는 별도(easy/normal/hard, Q4로 결정).",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "description": "상대 역할(사기범 또는 정상 상담원)이 이 대화에서 달성하려는 최종 목적"
+    },
+    "learning_objectives": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "훈련 종료 후 평가 항목 (goal 과 별개)"
+    },
+    "max_turns": { "type": "integer", "minimum": 1 },
+    "persona": {
+      "type": "object",
+      "required": ["display_name", "tone", "voice_preset"],
+      "properties": {
+        "display_name": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "description": "사칭할 때 쓰는 개인 이름. 없으면 빈 문자열" },
+        "org": { "type": "string", "description": "사칭 기관. 자녀 사칭·신변 위협형은 빈 문자열" },
+        "role": { "type": "string" },
+        "tone": { "type": "string", "minLength": 1 },
+        "voice_preset": { "type": "string", "minLength": 1 },
+        "rules": { "type": "array", "items": { "type": "string" } },
+        "resistance_strategy": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "훈련생이 의심·거부할 때의 대응 (구 stress_response/suspicion_handling)"
+        }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "선형 대화 흐름만. 종료 조건은 end_conditions, 의심 대응은 persona.resistance_strategy 로 분리한다.",
+      "items": {
+        "type": "object",
+        "required": ["id", "objective", "tactics", "min_turns"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "objective": { "type": "string", "minLength": 1 },
+          "tactics": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "min_turns": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "이 턴 수를 채워야 전환 후보. 최종 승인은 advance_when + 코드(AND-게이트)"
+          },
+          "advance_when": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "판정기 프롬프트에 그대로 주입되는 전환 기준. 비어 있으면 안 됨"
+          },
+          "opening": {
+            "type": "string",
+            "description": "첫 stage 에만 존재 — 엔진이 1턴을 API 호출 없이 이 값으로 시작한다"
+          }
+        }
+      }
+    },
+    "tell_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "stage", "trigger", "why", "weight", "first_detectable_turn"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "stage": { "type": "string", "description": "stages[].id 중 하나를 참조" },
+          "signal_type": {
+            "type": "string",
+            "enum": ["risk", "legitimacy"],
+            "default": "risk",
+            "description": "risk=사기 신호, legitimacy=정상 시나리오임을 보여주는 신호"
+          },
+          "trigger": { "type": "string", "minLength": 1, "description": "실제 발화에서 관찰 가능한 단서여야 한다" },
+          "why": { "type": "string", "minLength": 10 },
+          "weight": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3,
+            "description": "판별 결정력. 1=약한 보조 신호, 3=결정적 신호"
+          },
+          "first_detectable_turn": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "해당 stage 도달 최초 턴 이상이어야 한다 (공식: 1 + 2*sum(앞 stage min_turns))"
+          }
+        }
+      }
+    },
+    "forbidden": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "이 시나리오에서 절대 생성하면 안 되는 것. CLAUDE.md 비협상 안전 제약의 시나리오별 구체화"
+    },
+    "end_conditions": {
+      "type": "array",
+      "description": "판정기가 충족을 제안하고 코드가 최종 승인한다 (stage 전환과 동일 원칙)",
+      "items": {
+        "type": "object",
+        "required": ["id", "condition", "result"],
+        "properties": {
+          "id": { "type": "string" },
+          "condition": { "type": "string", "minLength": 1 },
+          "result": { "type": "string", "enum": ["training_success", "terminate", "safety_stop"] }
+        }
+      }
+    },
+    "debrief_points": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "훈련 종료 후 사용자에게 보여줄 핵심 피드백"
+    }
+  }
+}
