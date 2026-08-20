@@ -22,6 +22,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 from ai_core.state import create_session, current_stage, try_advance_stage  # noqa: E402
+from ai_core.streaming import split_sentences  # noqa: E402
 from ai_core.types import Scenario  # noqa: E402
 
 failed = 0
@@ -89,6 +90,23 @@ while state3.stage_index < len(scenario.stages) - 1:
 state3.turns_in_stage = 99
 last = try_advance_stage(scenario, state3, proposed=True)
 check("마지막 단계에서는 판정기가 찬성해도 전환 안 함", not last.advanced, last.reason)
+
+print("\n문장 분리 — split_sentences() (스트리밍 x 안전 필터)")
+
+sentences, rest = split_sentences("괜찮으세요? 확인이 필요합니다.")
+check("일반 문장 2개로 분리", sentences == ["괜찮으세요?", "확인이 필요합니다."], str(sentences))
+check("잔여 버퍼 없음", rest == "", repr(rest))
+
+sentences, rest = split_sentences("hanbit-secure.example 로 접속하세요.")
+check(
+    "더미 도메인 마침표는 경계로 안 잡힘",
+    sentences == ["hanbit-secure.example 로 접속하세요."],
+    str(sentences),
+)
+
+sentences, rest = split_sentences("본인 확인이 필요합니다. 성함이")
+check("완성된 문장만 반환", sentences == ["본인 확인이 필요합니다."], str(sentences))
+check("종결부호 없는 잔여분은 버퍼에 남음", rest == " 성함이", repr(rest))
 
 if failed == 0:
     print("\n스모크 테스트 통과 — 결정론적 코어는 정상입니다.\n")

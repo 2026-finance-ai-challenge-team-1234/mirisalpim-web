@@ -13,11 +13,10 @@ risky_actions 는 training.RiskyAction.ACTION_TYPE(Django 모델)과 동일한 5
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 
 from ..cost import Usage
-from ..llm import ChatRequest, chat
+from ..llm import ChatRequest, chat_json
 from ..prompts import JUDGE_CORE, JUDGE_SCHEMA, advance_criteria_block, scenario_block
 from ..state import current_stage
 from ..types import Scenario, SessionState
@@ -58,18 +57,26 @@ def generate_judge_turn(scenario: Scenario, state: SessionState) -> JudgeResult:
         "판정 대상은 위 대화의 마지막 훈련생(user) 발화입니다."
     )
 
-    res = chat(
-        "judge",
-        ChatRequest(
-            system=JUDGE_CORE,
-            cached_system=scenario_block(scenario),
-            messages=messages,
-            turn_state=turn_state,
-            response_schema=JUDGE_SCHEMA,
-        ),
+    req = ChatRequest(
+        system=JUDGE_CORE,
+        cached_system=scenario_block(scenario),
+        messages=messages,
+        turn_state=turn_state,
+        response_schema=JUDGE_SCHEMA,
     )
+    data, res = chat_json("judge", req)
 
-    data = json.loads(res.text)
+    if data is None:
+        # 재시도까지 파싱 실패 - 판정 불가 상태에서는 전환하지 않는다 (fail-safe).
+        return JudgeResult(
+            advance_stage=False,
+            risky_actions=[],
+            resisted=False,
+            reasoning="판정기 응답 파싱 실패로 전환을 보류했습니다.",
+            model=res.model,
+            latency_ms=res.latency_ms,
+            usage=res.usage,
+        )
 
     return JudgeResult(
         advance_stage=bool(data["advance_stage"]),
