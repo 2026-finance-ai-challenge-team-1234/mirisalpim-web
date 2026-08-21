@@ -1,50 +1,56 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+
+function readStoredUserName() {
+  try {
+    const savedUser = localStorage.getItem("userSurveyData");
+    if (!savedUser) return "고객";
+
+    const parsed = JSON.parse(savedUser);
+    return parsed?.userName || "고객";
+  } catch {
+    return "고객";
+  }
+}
+
+function buildInitialReportData() {
+  const category = localStorage.getItem("selectedCategory") || "voice";
+
+  const analysisResult = {
+    type: "권위 압박형 기관사칭",
+    vulnerableUtterances: [
+      {
+        // ⚠️ 실제 기관 도메인처럼 보이던 URL을 더미(.example)로 교체함
+        quote: '"https://training-link.example/claim 링크 클릭 시도"',
+        risk: "공식 도메인이 아닌 출처가 불분명한 URL에 접근함",
+      },
+    ],
+    behaviorPatterns: [
+      { title: "시간 압박 취약", desc: "서두르는 요구에 경계심이 낮아지고 판단을 조급히 내리는 경향이 있습니다.", status: "주의" },
+      { title: "공식 채널 재확인 미흡", desc: "해당 기관 공식 대표 번호로 직접 사실 여부를 확인하는 절차가 누락되었습니다.", status: "취약" },
+      { title: "주변 도움 요청", desc: "의심스러운 상황에서 가족이나 지인에게 공유하여 검증하는 습관이 필요합니다.", status: "보통" },
+    ],
+    solutions: [
+      "검찰·경찰·금감원은 전화로 자금 이체나 보안 인증번호를 절대 요구하지 않습니다.",
+      "의심스러운 연락은 일단 끊고, 해당 기관의 공식 대표 번호로 직접 전화하여 사실을 확인하세요.",
+      "악성 앱 설치 요구 시 절대 응하지 마시고 주변 지인에게 상황을 공유하세요.",
+    ],
+  };
+
+  if (category === "smishing") {
+    analysisResult.type = "공공기관 스미싱 피싱";
+  }
+
+  return analysisResult;
+}
 
 export default function Report() {
   const navigate = useNavigate();
-  const [userName, setUserName] = useState("고객");
-  const [reportData, setReportData] = useState(null);
+
+  const [userName] = useState(readStoredUserName);
+  const [reportData] = useState(buildInitialReportData);
   const [shareToast, setShareToast] = useState(false);
   const [downloadToast, setDownloadToast] = useState(false);
-
-  useEffect(() => {
-    const savedUser = localStorage.getItem("userSurveyData");
-    let currentName = "고객";
-    if (savedUser) {
-      const parsed = JSON.parse(savedUser);
-      if (parsed.userName) currentName = parsed.userName;
-    }
-    setUserName(currentName);
-
-    const category = localStorage.getItem("selectedCategory") || "voice";
-
-    let analysisResult = {
-      type: "권위 압박형 기관사칭",
-      vulnerableUtterances: [
-        {
-          quote: '"http://nhis-check.kr/claim 링크 클릭 시도"',
-          risk: "공식 도메인(.go.kr / .or.kr)이 아닌 가짜 출처의 URL에 접근함",
-        },
-      ],
-      behaviorPatterns: [
-        { title: "시간 압박 취약", desc: "서두르는 요구에 경계심이 낮아지고 판단을 조급히 내리는 경향이 있습니다.", status: "주의" },
-        { title: "공식 채널 재확인 미흡", desc: "해당 기관 공식 대표 번호로 직접 사실 여부를 확인하는 절차가 누락되었습니다.", status: "취약" },
-        { title: "주변 도움 요청", desc: "의심스러운 상황에서 가족이나 지인에게 공유하여 검증하는 습관이 필요합니다.", status: "보통" },
-      ],
-      solutions: [
-        "검찰·경찰·금감원은 전화로 자금 이체나 보안 인증번호를 절대 요구하지 않습니다.",
-        "의심스러운 연락은 일단 끊고, 해당 기관의 공식 대표 번호로 직접 전화하여 사실을 확인하세요.",
-        "악성 앱 설치 요구 시 절대 응하지 마시고 주변 지인에게 상황을 공유하세요.",
-      ],
-    };
-
-    if (category === "smishing") {
-      analysisResult.type = "공공기관 스미싱 피싱";
-    }
-
-    setReportData(analysisResult);
-  }, []);
 
   // 1. 일반 웹 URL 공유
   const handleShare = async () => {
@@ -69,7 +75,6 @@ export default function Report() {
 
   // 2. 어르신 부착용 / 카드뉴스 / PDF 출력용 핸들러 (백엔드 전송 연동 준비)
   const handleExportPrintable = () => {
-    // 백엔드로 보낼 텍스트 요약 페이로드 구성
     const printablePayload = {
       userName,
       reportType: reportData.type,
@@ -80,15 +85,12 @@ export default function Report() {
 
     console.log("백엔드 PDF/카드뉴스 생성 요청 데이터:", printablePayload);
 
-    // 사용자 알림 및 인쇄/PDF 저장 안내
     setDownloadToast(true);
     setTimeout(() => {
       setDownloadToast(false);
-      window.print(); // 브라우저 인쇄 및 PDF 저장 창 트리거
+      window.print();
     }, 1200);
   };
-
-  if (!reportData) return null;
 
   return (
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">

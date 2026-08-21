@@ -1,27 +1,26 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+
+function readStoredUserName() {
+  try {
+    const savedData = localStorage.getItem("userSurveyData");
+    if (!savedData) return "고객";
+
+    const parsed = JSON.parse(savedData);
+    return parsed?.userName || "고객";
+  } catch {
+    return "고객";
+  }
+}
+
+function readPrevTrack() {
+  return localStorage.getItem("selectedScenario") ? "ai" : "direct";
+}
 
 export default function CallIncoming() {
   const navigate = useNavigate();
-  const [userName, setUserName] = useState("고객");
-  const [prevTrack, setPrevTrack] = useState("direct");
-
-  useEffect(() => {
-    // 1. 저장된 사용자 이름 불러오기
-    const savedData = localStorage.getItem("userSurveyData");
-    if (savedData) {
-      const parsed = JSON.parse(savedData);
-      if (parsed.userName) setUserName(parsed.userName);
-    }
-
-    // 2. 진입 트랙 판단 (AI 추천 시나리오 정보 유무)
-    const scenario = localStorage.getItem("selectedScenario");
-    if (scenario) {
-      setPrevTrack("ai");
-    } else {
-      setPrevTrack("direct");
-    }
-  }, []);
+  const [userName] = useState(readStoredUserName);
+  const [prevTrack] = useState(readPrevTrack);
 
   // [거절] 버튼 스마트 복귀
   const handleDecline = () => {
@@ -39,11 +38,11 @@ export default function CallIncoming() {
   return (
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl flex flex-col justify-between p-6 relative overflow-hidden">
-        
+
         <div>
           {/* Top Header */}
           <header className="flex justify-between items-center pt-2 pb-4 mb-2">
-            <h1 
+            <h1
               onClick={() => navigate("/")}
               className="text-lg font-extrabold text-[#0052CC] cursor-pointer tracking-tight"
             >
@@ -90,7 +89,7 @@ export default function CallIncoming() {
         <div className="pb-8 pt-4">
 
           <div className="flex justify-around items-center px-4">
-            
+
             {/* Decline Button */}
             <div className="flex flex-col items-center">
               <button
@@ -108,7 +107,7 @@ export default function CallIncoming() {
             {/* Accept Button */}
             <div className="flex flex-col items-center relative">
               <div className="absolute w-16 h-16 bg-emerald-500/30 rounded-full animate-ping"></div>
-              
+
               <button
                 onClick={handleAccept}
                 className="w-16 h-16 bg-emerald-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-emerald-500/30 hover:bg-emerald-600 transition active:scale-95 mb-2 relative z-10"
