@@ -1,79 +1,89 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+function readStoredJson(key) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredUserName() {
+  const savedUser = readStoredJson("userSurveyData");
+  return savedUser?.userName || "고객";
+}
+
+function buildInitialSimulationState() {
+  const userName = readStoredUserName();
+  const savedScenario = readStoredJson("selectedScenario");
+
+  let category = localStorage.getItem("selectedCategory") || "voice";
+  if (savedScenario) {
+    category = savedScenario.isVoice ? "voice" : "smishing";
+  }
+
+  if (category === "smishing") {
+    return {
+      category: "smishing",
+      scenarioInfo: {
+        // ⚠️ 실존 기관의 실제 대표번호였던 걸 더미 번호로 교체함
+        caller: "국민건강보험공단",
+        subInfo: "1577-0000 • 환급금 지급팀",
+      },
+      chatHistory: [
+        {
+          sender: "bot",
+          text: `[국민건강보험] ${userName}님 환급금 184,500원 미신청 내역이 있습니다. 오늘 24시까지 아래 링크를 통해 신청해 주시기 바랍니다.`,
+          // ⚠️ 실제 접속 가능한 형태의 URL을 더미(.example)로 교체함
+          url: "https://training-link.example/claim",
+        },
+      ],
+      voiceOpening: null,
+    };
+  }
+
+  const voiceOpening = `${userName} 고객님 맞으시죠? 서울중앙지검 김민수 수사관입니다. 현재 본인 명의 계좌가 대포통장 범죄 사건에 연루되어 연락드렸습니다. 당황하지 마시고 제 질문에 답변해 주세요.`;
+
+  return {
+    category: "voice",
+    scenarioInfo: {
+      caller: "서울중앙지검 김민수 수사관",
+      subInfo: "02-1234-5678 • 이상 거래 감지팀",
+    },
+    chatHistory: [{ sender: "bot", text: voiceOpening }],
+    voiceOpening,
+  };
+}
+
 export default function Simulation() {
   const navigate = useNavigate();
 
-  const [userName, setUserName] = useState("고객");
-  const [category, setCategory] = useState("voice");
-  const [chatHistory, setChatHistory] = useState([]);
+  const [initialState] = useState(buildInitialSimulationState);
+  const category = initialState.category;
+  const scenarioInfo = initialState.scenarioInfo;
+
+  const [chatHistory, setChatHistory] = useState(initialState.chatHistory);
   const [isListening, setIsListening] = useState(false);
   const [inputText, setInputText] = useState("");
-  
-  // 스미싱 경고 모달 상태 관리
   const [showSmishingWarning, setShowSmishingWarning] = useState(false);
 
-  const [scenarioInfo, setScenarioInfo] = useState({
-    caller: "서울중앙지검 김민수 수사관",
-    subInfo: "02-1234-5678 • 이상 거래 감지팀",
-  });
-
+  // 음성 모드일 때만 첫 마디를 TTS로 재생 (마운트 시 1회)
   useEffect(() => {
-    const savedUser = localStorage.getItem("userSurveyData");
-    let currentName = "고객";
-    if (savedUser) {
-      const parsed = JSON.parse(savedUser);
-      if (parsed.userName) currentName = parsed.userName;
-    }
-    setUserName(currentName);
-
-    const savedScenario = localStorage.getItem("selectedScenario");
-    let currentCat = localStorage.getItem("selectedCategory") || "voice";
-
-    if (savedScenario) {
-      const parsedScenario = JSON.parse(savedScenario);
-      if (parsedScenario.isVoice) {
-        currentCat = "voice";
-      } else {
-        currentCat = "smishing";
-      }
-    }
-    setCategory(currentCat);
-
-    if (currentCat === "smishing") {
-      setScenarioInfo({
-        caller: "국민건강보험공단",
-        subInfo: "1577-1000 • 환급금 지급팀",
-      });
-      setChatHistory([
-        {
-          sender: "bot",
-          text: `[국민건강보험] ${currentName}님 환급금 184,500원 미신청 내역이 있습니다. 오늘 24시까지 아래 링크를 통해 신청해 주시기 바랍니다.`,
-          url: "http://nhis-check.kr/claim",
-        },
-      ]);
-    } else {
-      setScenarioInfo({
-        caller: "서울중앙지검 김민수 수사관",
-        subInfo: "02-1234-5678 • 이상 거래 감지팀",
-      });
-      const firstMsg = `${currentName} 고객님 맞으시죠? 서울중앙지검 김민수 수사관입니다. 현재 본인 명의 계좌가 대포통장 범죄 사건에 연루되어 연락드렸습니다. 당황하지 마시고 제 질문에 답변해 주세요.`;
-      
-      setChatHistory([{ sender: "bot", text: firstMsg }]);
-
-      if ("speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(firstMsg);
-        utterance.lang = "ko-KR";
-        utterance.rate = 0.9;
-        window.speechSynthesis.speak(utterance);
-      }
+    const firstMessage = initialState.voiceOpening;
+    if (firstMessage && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(firstMessage);
+      utterance.lang = "ko-KR";
+      utterance.rate = 0.9;
+      window.speechSynthesis.speak(utterance);
     }
 
     return () => {
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
-  }, []);
+  }, [initialState.voiceOpening]);
 
   const handleUserResponse = (userMsg) => {
     if (!userMsg.trim()) return;
@@ -126,7 +136,7 @@ export default function Simulation() {
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
       {/* PC에서도 모바일 비율로 깔끔하게 핏되는 Container */}
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] sm:max-h-[844px] bg-white shadow-xl rounded-none sm:rounded-3xl border-0 sm:border border-gray-200 flex flex-col justify-between p-5 relative overflow-y-auto">
-        
+
         <div>
           {/* Header */}
           <header className="flex justify-between items-center pt-1 pb-3 mb-2 border-b border-gray-100">
