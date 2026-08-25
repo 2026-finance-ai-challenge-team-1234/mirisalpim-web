@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>미리살핌 음성 POC</title>
+<style>
+  body { font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+  #log { white-space: pre-wrap; border: 1px solid #ccc; padding: 12px; height: 400px; overflow-y: auto; }
+  button { font-size: 16px; padding: 10px 20px; margin: 8px 8px 8px 0; }
+  button:disabled { opacity: 0.5; }
+</style>
+</head>
+<body>
+<h2>미리살핌 - 음성 POC (브라우저 마이크)</h2>
+<p>프론트엔드·백엔드와 무관한 검증용 페이지입니다. ai_core만 로컬 서버를 거쳐 호출합니다.</p>
+<button id="startBtn">세션 시작 (sc-02)</button>
+<button id="talkBtn" disabled>눌러서 말하기</button>
+<div id="log"></div>
+
+<script>
+let mediaRecorder;
+let chunks = [];
+let recording = false;
+
+const logEl = document.getElementById('log');
+const startBtn = document.getElementById('startBtn');
+const talkBtn = document.getElementById('talkBtn');
+
+function log(text) {
+  logEl.textContent += text + '\n\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function playAudioB64(b64) {
+  if (!b64) return Promise.resolve();
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: 'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  return new Promise((resolve) => {
+    audio.onended = resolve;
+    audio.onerror = resolve;
+    audio.play();
+  });
+}
+
+// 문장 오디오가 도착하는 대로 큐에 쌓고, 이전 문장 재생이 끝나면 다음을 재생한다.
+// enqueuePlay 자체는 기다리지 않는다 - SSE 리더가 다음 이벤트를 계속 받아야
+// "문장이 재생되는 동안 다음 문장이 생성되는" 진짜 병행이 성립한다.
+let playQueue = Promise.resolve();
+function enqueuePlay(b64) {
+  playQueue = playQueue.then(() => playAudioB64(b64));
+  return playQueue;
+}
+
+// POST 응답 바디를 SSE("data: {...}\n\n") 형식으로 직접 파싱한다.
+// 브라우저 내장 EventSource는 GET 전용이라 오디오 blob을 POST로 보내는 이 요청엔 못 쓴다.
+async function readSSE(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      if (chunk.startsWith('data: ')) {
+        onEvent(JSON.parse(chunk.slice(6)));
+      }
+    }
+  }
+}
+
+startBtn.onclick = async () => {
+  startBtn.disabled = true;
+  const res = await fetch('/session?scenario=sc-02');
+  const data = await res.json();
+  log('[상대] ' + data.opening_text);
+  await playAudioB64(data.audio_b64);
+  talkBtn.disabled = false;
+  startBtn.disabled = false;
+};
+
+talkBtn.onclick = async () => {
+  if (!recording) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    chunks = [];
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.start();
+    recording = true;
+    talkBtn.textContent = '눌러서 녹음 종료';
+    return;
+  }
+
+  talkBtn.disabled = true;
+  talkBtn.textContent = '처리 중...';
+  const stopped = new Promise((resolve) => { mediaRecorder.onstop = resolve; });
+  mediaRecorder.stop();
+  recording = false;
+  await stopped;
+
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  const res = await fetch('/turn', { method: 'POST', body: blob });
+
+  if (!res.ok || !res.body) {
+    log('(오류) 서버 응답 실패');
+    talkBtn.disabled = false;
+    talkBtn.textContent = '눌러서 말하기';
+    return;
+  }
+
+  let ended = false;
+  await readSSE(res, (evt) => {
+    if (evt.type === 'user_text') {
+      log('[훈련생] ' + evt.user_text);
+    } else if (evt.type === 'sentence') {
+      log('[상대 - 문장 도착] ' + evt.text);
+      enqueuePlay(evt.audio_b64); // await 하지 않는다 - 재생 중에도 다음 문장을 계속 받는다
+    } else if (evt.type === 'done') {
+      if (evt.error) log('(오류) ' + evt.error);
+      if (evt.blocked) log('  (안전 필터가 이 턴을 차단함: ' + JSON.stringify(evt.safety_violations) + ')');
+      if (evt.ended) {
+        log('[종료] ' + evt.end_reason);
+        ended = true;
+      }
+    }
+  });
+  await playQueue; // 마지막 문장까지 다 재생된 뒤에 다음 턴을 받는다
+
+  if (ended) {
+    talkBtn.textContent = '종료됨';
+    return;
+  }
+  talkBtn.disabled = false;
+  talkBtn.textContent = '눌러서 말하기';
+};
+</script>
+</body>
+</html>

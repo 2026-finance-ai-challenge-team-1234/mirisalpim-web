@@ -6,6 +6,14 @@ Controlled Streaming Cascade(idea-plan.md §7.5) 준비: 완성된 텍스트를 
 downstream 으로 나간 문장은 그 자체로 안전 검사를 통과했으므로 그대로 유지한다
 (기존 사후 검사처럼 전체 턴을 통째로 대체하지 않는다).
 
+안전 검사(check_safety)는 백그라운드 스레드 하나가 큐에서 순서대로 꺼내 처리한다.
+feed() 는 문장을 큐에 넣기만 하고 바로 반환한다 - 2026-08-25 실측: feed() 안에서
+check_safety() 를 동기 호출하면 llm.py 의 스트림 소비 루프(on_delta 호출부)가 그
+네트워크 왕복만큼 그대로 멈춰서, 문장이 2개면 안전검사 지연이 고스란히 두 번
+더해졌다(한 턴에 최대 20초+). 백그라운드 스레드로 분리하면 다음 문장을 계속
+받아오는 동안 이전 문장의 안전검사가 병행되어 이 지연이 상당 부분 가려진다.
+큐가 FIFO 단일 워커라 승인 순서·차단 시 즉시 중단 의미는 그대로 유지된다.
+
 스트림 자체를 조기 중단하지는 않는다(스코프 제한) - 차단 후에도 LLM 응답 생성은
 끝까지 받되, 남은 문장은 안전 검사도 하지 않고 버린다. llm.py 의 프로바이더별
 스트리밍 루프를 고쳐야 하는 조기 중단은 별도 과제다.
@@ -13,7 +21,9 @@ downstream 으로 나간 문장은 그 자체로 안전 검사를 통과했으�
 
 from __future__ import annotations
 
+import queue
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -25,6 +35,9 @@ from .prompts import SAFETY_FALLBACK_TEXT
 #: "hanbit-secure.example" 같은 더미 도메인의 마침표는 뒤에 공백 없이 문자가
 #: 바로 붙으므로 경계로 잡히지 않는다.
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?…])(?=\s|$)")
+
+#: 워커 종료 신호
+_DONE = object()
 
 
 def split_sentences(buf: str) -> tuple[list[str], str]:
@@ -39,8 +52,9 @@ def split_sentences(buf: str) -> tuple[list[str], str]:
 class StreamingSafetyGate:
     """generate_scammer_turn(scenario, state, on_delta=gate.feed) 로 꽂는다.
 
-    스트림이 끝난 뒤 반드시 finish() 를 호출해 잔여 버퍼(종결부호 없이 끝난
-    마지막 문장)까지 검사해야 한다.
+    스트림이 끝난 뒤 반드시 finish() 를 호출해야 한다 - 잔여 버퍼를 마저 검사하고,
+    백그라운드 워커가 큐를 다 처리할 때까지 기다린 뒤 반환한다(join). finish() 가
+    반환한 시점부터 display_text/blocked/violations/usage 를 읽어도 안전하다.
     """
 
     #: 승인된 문장이 나올 때마다 호출할 실제 콜백(TTS 등). None 이면 그냥 버린다.
@@ -52,23 +66,46 @@ class StreamingSafetyGate:
     violations: list[str] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
 
+    _queue: queue.Queue = field(default_factory=queue.Queue, init=False, repr=False)
+    _worker: threading.Thread = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._worker = threading.Thread(target=self._run_worker, daemon=True)
+        self._worker.start()
+
     def feed(self, delta: str) -> None:
+        """llm.py 의 스트림 소비 루프에서 매 청크마다 호출된다 - 절대 블로킹하면 안 된다."""
         if self.blocked:
             return
         self._buf += delta
         sentences, self._buf = split_sentences(self._buf)
         for s in sentences:
-            self._check_and_emit(s)
-            if self.blocked:
-                return
+            self._queue.put(s)
 
     def finish(self) -> None:
-        if self.blocked:
-            return
+        """스트림 종료 후 호출. 잔여 버퍼를 큐에 넣고 워커가 다 처리할 때까지 기다린다."""
         tail = self._buf.strip()
         self._buf = ""
         if tail:
-            self._check_and_emit(tail)
+            self._queue.put(tail)
+        self._queue.put(_DONE)
+        self._worker.join()
+
+    def _run_worker(self) -> None:
+        """백그라운드에서 문장을 순서대로(FIFO) 안전 검사한다.
+
+        단일 워커라 승인 순서와 "차단되면 그 뒤는 버림" 의미가 그대로 유지된다.
+        self.blocked 를 feed() 가 읽는 것과 여기서 쓰는 것 사이에 락을 걸지 않았다 -
+        bool 하나의 읽기/쓰기라 GIL 상 원자적이고, 최악의 경우도 feed() 가 차단 직후
+        문장 한두 개를 더 큐에 넣는 정도인데 그 문장들은 아래에서 그대로 버려진다.
+        """
+        while True:
+            sentence = self._queue.get()
+            if sentence is _DONE:
+                return
+            if self.blocked:
+                continue
+            self._check_and_emit(sentence)
 
     def _check_and_emit(self, sentence: str) -> None:
         result = check_safety(sentence)
