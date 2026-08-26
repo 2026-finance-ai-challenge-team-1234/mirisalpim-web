@@ -28,8 +28,8 @@ urlpatterns = [
     path("health/", health),
     path("admin/", admin.site.urls),
 
-    # API가 준비되면 추가
-    # path("api/", include("training.urls")),
+    # 프론트 client.js의 API_BASE "/api/v1"
+    path("api/v1/", include("training.urls")),
 
     # 반드시 가장 마지막에 배치
     re_path(

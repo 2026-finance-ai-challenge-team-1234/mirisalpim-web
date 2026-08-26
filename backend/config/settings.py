@@ -17,6 +17,7 @@ import dj_database_url
 from dotenv import load_dotenv
 
 load_dotenv()
+IS_TEST = "test" in sys.argv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -53,6 +54,8 @@ ALLOWED_HOSTS = [
     ).split(",")
     if host.strip()
 ]
+if IS_TEST and "testserver" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("testserver")
 
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
@@ -104,6 +107,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+ASGI_APPLICATION = 'config.asgi.application'  # 턴 SSE 에 async view 를 쓴다
 
 
 # Database
@@ -170,5 +174,10 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
-SECURE_SSL_REDIRECT = not DEBUG
+# 익명 세션 TTL (API 설계 9절: 30분 비활성).
+# SESSION_SAVE_EVERY_REQUEST 가 있어야 '마지막 요청 기준 30분'이 된다.
+SESSION_COOKIE_AGE = 1800
+SESSION_SAVE_EVERY_REQUEST = True
+
+SECURE_SSL_REDIRECT = not DEBUG and not IS_TEST
 SECURE_HSTS_SECONDS = 0  # 초기 배포 검증 후 점진적으로 활성화
