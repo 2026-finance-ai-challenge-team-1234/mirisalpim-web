@@ -5,6 +5,7 @@ from unittest import skipUnless
 from unittest.mock import patch
 
 from ai_core.engine import Engine, TurnOutcome, load_scenario, start_session
+from ai_core.llm import ConfigError
 from ai_core.types import RiskyAction as EngineRiskyAction
 from ai_core.types import UserJudgment as EngineJudgment
 from ai_core.state import (
@@ -1314,6 +1315,33 @@ class ApiErrorContractTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response["Content-Type"], "application/json")
         self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
+
+    def test_llm_config_failure_still_returns_json(self):
+        """LLM 설정이 깨져 있어도 프론트가 읽을 수 있는 응답이어야 한다.
+
+        ai_core.llm 은 예전에 import 시점에 sys.exit(1) 을 불러 워커째 죽었다.
+        이제는 호출 시점에 ConfigError 가 나고, API 는 JSON 계약을 지킨다.
+        """
+        call_command("seed_scenarios", verbosity=0)
+        client = Client(raise_request_exception=False)
+        client.get("/api/v1/bootstrap")
+        client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        session_id = client.post("/api/v1/training-sessions").json()["sessionId"]
+
+        with patch("training.views.step", side_effect=ConfigError("키 없음")):
+            response = client.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data={"text": "여보세요"},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertEqual(response.json()["error"]["code"], "INTERNAL_ERROR")
 
     def test_api_error_carries_a_request_id(self):
         """응답의 requestId 를 서버 로그와 맞춰볼 수 있어야 한다."""
