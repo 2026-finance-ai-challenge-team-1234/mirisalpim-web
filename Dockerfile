@@ -37,4 +37,11 @@ RUN SECRET_KEY=build-only-not-for-runtime \
     DATABASE_URL=postgresql://build:build@invalid/build \
     python manage.py collectstatic --noinput
 
-CMD ["/bin/sh", "-c", "python manage.py migrate --noinput && exec uvicorn config.asgi:application --host 0.0.0.0 --port ${PORT:-8000}"]
+# 시나리오 적재는 기동할 때마다 한다 (update_or_create 라 멱등하다). 빌드 단계의
+# seed_scenarios --check 는 검증만 하고 DB 를 건드리지 않으므로, 이 줄이 없으면
+# 배포 DB 의 Scenario 테이블이 비어 있고 훈련이 시작조차 되지 않는다.
+#
+# ⚠️ seed 실패가 기동을 막지 않게 한다. 진행됐던 세션의 Turn 이 Stage 를 PROTECT 로
+# 참조하고 있으면 seed_scenarios 가 단계를 교체하지 못하고 CommandError 를 낸다.
+# 그때 서비스 전체가 못 뜨는 것보다 기존 시나리오로 뜨는 편이 낫다.
+CMD ["/bin/sh", "-c", "python manage.py migrate --noinput && { python manage.py seed_scenarios || echo 'WARNING: seed_scenarios 실패 - 기존 적재분으로 기동합니다'; } && exec uvicorn config.asgi:application --host 0.0.0.0 --port ${PORT:-8000}"]
