@@ -149,6 +149,10 @@ class Session(models.Model):
     anon_client_id = models.CharField(max_length=100)
     entry_path = models.CharField(max_length=20, choices=ENTRY_PATH)
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY, default="normal")
+    #: ai_core.SessionState 에는 있지만 다른 테이블에서 복원할 수 없는 두 값.
+    #: turns_in_stage 는 min_turns 게이트가, resistance_count 는 사기꾼 프롬프트가 쓴다.
+    turns_in_stage = models.PositiveSmallIntegerField(default=0)
+    resistance_count = models.PositiveSmallIntegerField(default=0)
     turn = models.PositiveSmallIntegerField(default=0)
     current_stage = models.ForeignKey(Stage, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")    
     status = models.CharField(max_length=10, choices=STATUS)
@@ -208,9 +212,15 @@ class UserJudgment(models.Model):
 
 class DiagnosisReport(models.Model):
     session = models.OneToOneField(Session, on_delete=models.CASCADE, primary_key=True, related_name="diagnosis")
-    vulnerability_type = models.CharField(max_length=30)
+    #: Cialdini 5유형으로 고정할지 자유 문구로 둘지 팀 미확정이라 아직 비워둘 수 있게 한다
+    vulnerability_type = models.CharField(max_length=30, blank=True)
+    #: tp_key 스냅샷. 종료 후 원문을 지워도 타임라인을 다시 그릴 수 있게 남긴다
     missed_tell_points = models.JSONField(default=list)
     guidance_text = models.TextField()
+    #: 리포트 문서 §4 진단 LLM 출력 3종. LLM 없이도 규칙 기반 문장으로 채운다
+    summary = models.TextField(blank=True)
+    strength = models.TextField(blank=True)
+    weakness = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class EvalResult(models.Model):

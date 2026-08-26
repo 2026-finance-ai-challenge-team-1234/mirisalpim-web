@@ -104,6 +104,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+ASGI_APPLICATION = 'config.asgi.application'  # 턴 SSE 에 async view 를 쓴다
 
 
 # Database
@@ -169,6 +170,11 @@ STATICFILES_DIRS = [FRONTEND_DIST] if FRONTEND_DIST.exists() else []
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+
+# 익명 세션 TTL (API 설계 9절: 30분 비활성).
+# SESSION_SAVE_EVERY_REQUEST 가 있어야 '마지막 요청 기준 30분'이 된다.
+SESSION_COOKIE_AGE = 1800
+SESSION_SAVE_EVERY_REQUEST = True
 
 SECURE_SSL_REDIRECT = not DEBUG
 SECURE_HSTS_SECONDS = 0  # 초기 배포 검증 후 점진적으로 활성화
