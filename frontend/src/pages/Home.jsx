@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import PageHeader from "../components/PageHeader";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -7,22 +8,9 @@ export default function Home() {
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
       {/* 원본 p-6 여백 및 레이아웃 100% 유지 */}
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl flex flex-col justify-between p-6 relative overflow-y-auto">
-        
+
         <div>
-          {/* 1. Top Header */}
-          <header className="flex justify-between items-center pt-2 pb-4 mb-4">
-            <h1 className="text-xl font-extrabold text-[#0052CC] tracking-tight">
-              미리살핌
-            </h1>
-            <div className="flex items-center space-x-3 text-[#191F28]">
-              <button aria-label="알림" className="hover:opacity-70 transition">
-                <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-              </button>
-              <button aria-label="설정" className="hover:opacity-70 transition">
-                <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              </button>
-            </div>
-          </header>
+          <PageHeader />
 
           {/* 2. Hero Section */}
           <section className="mb-5">
@@ -78,7 +66,7 @@ export default function Home() {
           >
             체험 시작하기
           </button>
-          
+
           <p className="text-[10px] text-center text-[#8B95A1] mt-3 mb-1 whitespace-nowrap">
             본 서비스는 실제 금융 사기를 모의한 예방 훈련 서비스입니다.
           </p>

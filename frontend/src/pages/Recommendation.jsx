@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import PageHeader from "../components/PageHeader";
 
-// 채널(voice/smishing) 값에 따른 표시 라벨. title/description/reasons는 이제
-// 백엔드 응답에 다 포함되어 있어서, 여기선 화면 표시용 라벨만 최소한으로 관리함.
 const CHANNEL_META = {
   voice: { label: "📞 음성 통화 (Voice)", isVoice: true },
   smishing: { label: "📱 문자 URL (SMS)", isVoice: false },
@@ -15,7 +14,6 @@ export default function Recommendation() {
 
   const recommendation = state?.recommendation;
 
-  // SurveyLoading을 안 거치고 새로고침/직접 URL 접근한 경우 → 되돌려보냄
   useEffect(() => {
     if (!recommendation) {
       navigate("/mode-select", { replace: true });
@@ -50,20 +48,7 @@ export default function Recommendation() {
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl flex flex-col justify-between p-6 relative overflow-y-auto">
 
         <div>
-          <header className="flex justify-between items-center pt-2 pb-4 mb-2">
-            <button
-              onClick={() => navigate("/survey")}
-              className="text-[#191F28] hover:opacity-70 transition p-1 -ml-1"
-            >
-              <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </button>
-            <h1 onClick={() => navigate("/")} className="text-lg font-extrabold text-[#0052CC] cursor-pointer">
-              미리살핌
-            </h1>
-            <div className="w-5"></div>
-          </header>
+          <PageHeader onBack={() => navigate("/survey")} />
 
           <div className="mb-4">
             <span className="text-[11px] font-bold text-[#0052CC] bg-blue-50 px-2.5 py-1 rounded-md">

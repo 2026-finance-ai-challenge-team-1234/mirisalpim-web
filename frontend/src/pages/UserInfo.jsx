@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiPost } from "../api/client";
+import PageHeader from "../components/PageHeader";
 
 export default function UserInfo() {
   const navigate = useNavigate();
@@ -20,18 +21,13 @@ export default function UserInfo() {
   const handleConfirmStart = async () => {
     setSubmitting(true);
 
-    // P-03-02. 서버에 기본 정보 + 직접 선택한 시나리오를 함께 저장.
-    // ⚠️ trackId/category 필드명은 아직 백엔드와 정식 확정된 이름이 아니라 제안값임 —
-    // 백엔드 팀원 확인 후 실제 필드명 다르면 여기만 맞춰서 바꾸면 됨.
-    // 응답 바디가 없는 API라 성공 여부만 신경 쓰면 되고, 실패해도 흐름을 막지는 않음
-    // (백엔드 미완성 상태에서도 프론트 개발/테스트가 계속 가능하도록).
     try {
       await apiPost("/user-info", {
         name: userName.trim(),
         age: age.trim() || null,
         address: address.trim() || null,
-        trackId: localStorage.getItem("selectedTrackId"),          // 예: "T01-1"
-        category: localStorage.getItem("selectedCategory"),        // "voice" | "smishing"
+        trackId: localStorage.getItem("selectedTrackId"),
+        category: localStorage.getItem("selectedCategory"),
       });
     } catch (err) {
       console.warn("[UserInfo] 서버 저장 실패, 로컬 데이터로 계속 진행합니다:", err.message);
@@ -61,25 +57,11 @@ export default function UserInfo() {
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl flex flex-col justify-between p-6 relative overflow-y-auto">
 
         <div>
-          <header className="flex justify-between items-center pt-2 pb-4 mb-2">
-            <button
-              onClick={() => navigate("/category-select")}
-              aria-label="뒤로가기"
-              className="text-[#191F28] hover:opacity-70 transition p-1 -ml-1"
-            >
-              <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </button>
-            <h1 className="text-sm font-bold text-[#191F28]">
-              기본 정보 입력
-            </h1>
-            <button aria-label="알림" className="text-[#191F28] hover:opacity-70 transition">
-              <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/>
-              </svg>
-            </button>
-          </header>
+          <PageHeader
+            onBack={() => navigate("/category-select")}
+            variant="title"
+            label="기본 정보 입력"
+          />
 
           <section className="mb-4">
             <h2 className="text-[20px] font-extrabold text-[#191F28] leading-[1.3] mb-3 tracking-tight break-keep">

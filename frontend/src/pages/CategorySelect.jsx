@@ -1,58 +1,48 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchAllScenarios } from "../api/scenarioApi";
+import PageHeader from "../components/PageHeader";
 
 export default function CategorySelect() {
   const navigate = useNavigate();
 
-  // 1. 선택 단계 관리 (1: 전화/문자 대분류, 2: 8대 중분류 선택, 3: 세부 소분류 시나리오 선택)
   const [step, setStep] = useState(1);
+  const [mainCategory, setMainCategory] = useState(null);
+  const [selectedSubGroup, setSelectedSubGroup] = useState(null);
+  const [selectedTrack, setSelectedTrack] = useState(null);
 
-  // 2. 선택된 데이터 상태 관리
-  const [mainCategory, setMainCategory] = useState(null); // 'voice' | 'smishing'
-  const [selectedSubGroup, setSelectedSubGroup] = useState(null); // 중분류 ID (T01~T08, S01~S08)
-  const [selectedTrack, setSelectedTrack] = useState(null); // 트랙(소분류) 객체 { id, name, code } — 예: id="T01-1"
-
-  // 3. P-03-01: 서버에서 전체 시나리오 목록 불러오기 (실패 시 자동으로 기존 데이터 사용)
-  const [scenarios, setScenarios] = useState(null); // { voice: [...], smishing: [...] }
+  const [scenarios, setScenarios] = useState(null);
 
   useEffect(() => {
     fetchAllScenarios().then(setScenarios);
   }, []);
 
-  // [단계 1] 메인 카테고리(전화 vs 문자) 선택
   const handleSelectMain = (type) => {
     setMainCategory(type);
     setSelectedSubGroup(null);
     setSelectedTrack(null);
-    setStep(2); // 둘 다 2단계(8대 중분류 선택)로 직행
+    setStep(2);
   };
 
-  // [단계 2] 8대 중분류 선택
   const handleSelectSubGroup = (groupId) => {
     setSelectedSubGroup(groupId);
     setSelectedTrack(null);
-    setStep(3); // 3단계(세부 소분류 선택)로 이동
+    setStep(3);
   };
 
-  // [최종 제출] 다음 페이지(UserInfo)로 이동
   const handleStart = () => {
     if (!mainCategory || !selectedTrack) return;
 
-    // ⚠️ "selectedScenario"는 Track A(추천) 플로우가 Simulation 시작 시 쓰는 별개의 키라 그대로 둠
     localStorage.removeItem("selectedScenario");
     localStorage.setItem("selectedCategory", mainCategory);
-    localStorage.setItem("selectedTrackId", selectedTrack.id);       // 예: "T01-1"
+    localStorage.setItem("selectedTrackId", selectedTrack.id);
     localStorage.setItem("selectedTrackName", selectedTrack.name);
     localStorage.setItem("selectedTrackCode", selectedTrack.code);
-
-    // AI 대화 연동 시 필요한 페르소나 키값 매핑
     localStorage.setItem("selectedPersonaKey", `${selectedTrack.code}_persona.json`);
 
     navigate("/user-info");
   };
 
-  // 상단 뒤로가기 핸들러
   const handleHeaderBack = () => {
     if (step === 3) {
       setStep(2);
@@ -66,7 +56,6 @@ export default function CategorySelect() {
     }
   };
 
-  // 현재 활성화된 카테고리 목록 및 선택된 중분류 객체 (scenarios 로딩 전엔 빈 배열로 처리)
   const currentCategoryList = scenarios
     ? mainCategory === "voice"
       ? scenarios.voice
@@ -74,7 +63,6 @@ export default function CategorySelect() {
     : [];
   const currentGroupObj = currentCategoryList.find((g) => g.id === selectedSubGroup);
 
-  // 데이터 로딩 중에는 스피너만 보여줌 (거의 즉시 끝남 - 실패해도 목업으로 바로 대체되므로)
   if (!scenarios) {
     return (
       <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased">
@@ -88,31 +76,8 @@ export default function CategorySelect() {
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl flex flex-col justify-between p-6 relative overflow-y-auto">
 
         <div>
-          {/* Header */}
-          <header className="flex justify-between items-center pt-2 pb-4 mb-2 border-b border-gray-100">
-            <button
-              onClick={handleHeaderBack}
-              aria-label="뒤로가기"
-              className="text-[#191F28] hover:opacity-70 transition p-1 -ml-1 flex items-center justify-center"
-            >
-              <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </button>
-            <h1
-              onClick={() => navigate("/")}
-              className="text-lg font-extrabold text-[#0052CC] cursor-pointer tracking-tight"
-            >
-              미리살핌
-            </h1>
-            <button aria-label="알림" className="text-[#191F28] hover:opacity-70 transition p-1 -mr-1">
-              <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/>
-              </svg>
-            </button>
-          </header>
+          <PageHeader onBack={handleHeaderBack} bordered />
 
-          {/* Title Section */}
           <section className="mb-4">
             <span className="text-[10px] font-bold text-[#0052CC] bg-blue-50 px-2 py-0.5 rounded-md">
               직접 선택 훈련 • STEP {step}/3
@@ -137,10 +102,8 @@ export default function CategorySelect() {
             </p>
           </section>
 
-          {/* STEP 1: 전화(보이스피싱) vs 문자(스미싱) 대분류 선택 */}
           {step === 1 && (
             <div className="space-y-3.5 animate-fade-in">
-              {/* 보이스피싱 카드 */}
               <div
                 onClick={() => handleSelectMain("voice")}
                 className={`p-4 rounded-2xl border-2 transition-all cursor-pointer ${
@@ -165,7 +128,6 @@ export default function CategorySelect() {
                 </div>
               </div>
 
-              {/* 스미싱 카드 */}
               <div
                 onClick={() => handleSelectMain("smishing")}
                 className={`p-4 rounded-2xl border-2 transition-all cursor-pointer ${
@@ -192,7 +154,6 @@ export default function CategorySelect() {
             </div>
           )}
 
-          {/* STEP 2: 8대 중분류 선택 */}
           {step === 2 && (
             <div className="space-y-3 animate-fade-in max-h-[460px] overflow-y-auto pr-1">
               {currentCategoryList.map((cat) => (
@@ -217,7 +178,6 @@ export default function CategorySelect() {
             </div>
           )}
 
-          {/* STEP 3: 세부 소분류 시나리오 선택 */}
           {step === 3 && currentGroupObj && (
             <div className="space-y-2.5 animate-fade-in max-h-[460px] overflow-y-auto pr-1">
               <div className="bg-blue-50/60 p-3 rounded-xl border border-blue-100 mb-3">
@@ -255,7 +215,6 @@ export default function CategorySelect() {
           )}
         </div>
 
-        {/* 하단 실행 버튼 */}
         <div className="pt-4 border-t border-gray-100 bg-white">
           <button
             onClick={handleStart}

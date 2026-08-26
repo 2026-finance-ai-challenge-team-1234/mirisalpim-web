@@ -1,7 +1,8 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
 import { BootstrapProvider } from "./context/BootstrapContext";
 import Home from "./pages/Home";
-import TypeSelect from "./pages/TypeSelect"; // 신규 추가: 체험 모드 선택 (대화형 vs 피싱랩)
+import TypeSelect from "./pages/TypeSelect";
 import ModeSelect from "./pages/ModeSelect";
 import Survey from "./pages/Survey";
 import SurveyLoading from "./pages/SurveyLoading";
@@ -10,42 +11,49 @@ import CategorySelect from "./pages/CategorySelect";
 import UserInfo from "./pages/UserInfo";
 import CallIncoming from "./pages/CallIncoming";
 import Simulation from "./pages/Simulation";
+import ReportLoading from "./pages/ReportLoading";
 import Report from "./pages/Report";
-import PhishingLab from "./pages/PhishingLab"; // 신규 추가: 피싱 사이트 정밀 분석 체험관
+import PhishingLab from "./pages/PhishingLab";
 
-export default function App() {
+// 화면 전환 시 페이드 애니메이션. 페이지 파일들은 전혀 안 건드리고,
+// 여기서 <Routes> 전체를 감싸서 pathname이 바뀔 때마다 부드럽게 전환되게 함.
+function AnimatedRoutes() {
+  const location = useLocation();
+
   return (
-    // P-01: 라우팅 시작 전에 bootstrap 먼저 실행되도록 최상단에서 감쌈.
-    // (화면을 막지는 않음 - 실패해도 기본값으로 계속 진행)
-    <BootstrapProvider>
-      <BrowserRouter>
-        <Routes>
-          {/* 공통 메인 홈 */}
+    <AnimatePresence mode="wait">
+      <motion.div
+        key={location.pathname}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18, ease: "easeInOut" }}
+      >
+        <Routes location={location}>
           <Route path="/" element={<Home />} />
-
-          {/* 1단계: 체험 방식 1차 선택 (실시간 AI 대화 훈련 vs 피싱 사이트 체험관) */}
           <Route path="/type-select" element={<TypeSelect />} />
-
-          {/* 2단계 (대화 훈련 선택 시): 진입 방식 선택 (AI 맞춤 추천 vs 직접 선택) */}
           <Route path="/mode-select" element={<ModeSelect />} />
-
-          {/* 트랙 A: AI 맞춤 추천 플로우 */}
           <Route path="/survey" element={<Survey />} />
           <Route path="/survey-loading" element={<SurveyLoading />} />
           <Route path="/recommendation" element={<Recommendation />} />
-
-          {/* 트랙 B: 직접 선택 플로우 */}
           <Route path="/category-select" element={<CategorySelect />} />
           <Route path="/user-info" element={<UserInfo />} />
-
-          {/* 트랙 A/B 공통 훈련 및 결과 리포트 플로우 */}
           <Route path="/call-incoming" element={<CallIncoming />} />
           <Route path="/simulation" element={<Simulation />} />
+          <Route path="/report-loading" element={<ReportLoading />} />
           <Route path="/report" element={<Report />} />
-
-          {/* 독립 트랙: 피싱 사이트 정밀 분석 체험관 */}
           <Route path="/phishing-lab" element={<PhishingLab />} />
         </Routes>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+export default function App() {
+  return (
+    <BootstrapProvider>
+      <BrowserRouter>
+        <AnimatedRoutes />
       </BrowserRouter>
     </BootstrapProvider>
   );

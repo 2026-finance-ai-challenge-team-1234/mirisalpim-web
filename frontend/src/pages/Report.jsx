@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import PageHeader from "../components/PageHeader";
 
 function readStoredUserName() {
   try {
@@ -20,7 +21,6 @@ function buildInitialReportData() {
     type: "권위 압박형 기관사칭",
     vulnerableUtterances: [
       {
-        // ⚠️ 실제 기관 도메인처럼 보이던 URL을 더미(.example)로 교체함
         quote: '"https://training-link.example/claim 링크 클릭 시도"',
         risk: "공식 도메인이 아닌 출처가 불분명한 URL에 접근함",
       },
@@ -52,7 +52,6 @@ export default function Report() {
   const [shareToast, setShareToast] = useState(false);
   const [downloadToast, setDownloadToast] = useState(false);
 
-  // 1. 일반 웹 URL 공유
   const handleShare = async () => {
     const shareData = {
       title: "미리살핌 - AI 금융 사기 대응 진단 리포트",
@@ -73,7 +72,6 @@ export default function Report() {
     }
   };
 
-  // 2. 어르신 부착용 / 카드뉴스 / PDF 출력용 핸들러 (백엔드 전송 연동 준비)
   const handleExportPrintable = () => {
     const printablePayload = {
       userName,
@@ -96,25 +94,10 @@ export default function Report() {
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
       <div className="w-full max-w-[393px] min-h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl sm:rounded-3xl border-0 sm:border border-gray-100 flex flex-col relative">
 
-        {/* 1. 상단 헤더 */}
-        <header className="flex justify-between items-center pt-4 pb-3 px-6 border-b border-gray-100 bg-white z-20">
-          <h1
-            onClick={() => navigate("/")}
-            className="text-lg font-extrabold text-[#0052CC] cursor-pointer tracking-tight"
-          >
-            미리살핌
-          </h1>
-          <button aria-label="알림" className="text-[#191F28] hover:opacity-70 transition">
-            <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/>
-            </svg>
-          </button>
-        </header>
+        <PageHeader padding="pt-4 pb-3" bordered className="px-6 bg-white z-20" />
 
-        {/* 2. 본문 영역 */}
         <div className="px-6 py-4 space-y-4">
 
-          {/* Sub Title Section */}
           <section className="mb-2">
             <span className="text-[11px] font-bold text-[#0052CC] bg-blue-50 px-2.5 py-1 rounded-md">
               AI 대화 분석 완료
@@ -127,7 +110,6 @@ export default function Report() {
             </p>
           </section>
 
-          {/* 대화 기반 취약 발언 분석 카드 */}
           <div className="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4">
             <h3 className="text-xs font-bold text-[#0052CC] mb-2 flex items-center space-x-1">
               <span>🔍</span>
@@ -154,7 +136,6 @@ export default function Report() {
             </div>
           </div>
 
-          {/* 취약 행동 성향 분석 카드 */}
           <div>
             <h3 className="text-xs font-extrabold text-[#191F28] mb-2.5">
               취약 행동 성향 분석
@@ -180,7 +161,6 @@ export default function Report() {
             </div>
           </div>
 
-          {/* 맞춤 대응 행동 지침 */}
           <div className="bg-gradient-to-br from-blue-50/80 to-indigo-50/50 border border-blue-200/60 rounded-2xl p-4">
             <h3 className="text-xs font-extrabold text-[#0052CC] mb-2 flex items-center space-x-1">
               <span>🛡️</span>
@@ -198,7 +178,6 @@ export default function Report() {
 
         </div>
 
-        {/* 3. 버튼 영역: 2열 그리드로 공간 낭비 없는 4개 버튼 구조 */}
         <div className="p-4 mt-2 space-y-2 bg-white">
           {shareToast && (
             <div className="bg-gray-800 text-white text-[11px] text-center py-2 rounded-xl animate-fade-in">
@@ -212,7 +191,6 @@ export default function Report() {
             </div>
           )}
 
-          {/* 상단 1열: 주요 기능 2개 (가족 공유 & 냉장고 부착용 카드 저장) */}
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleShare}
@@ -231,7 +209,6 @@ export default function Report() {
             </button>
           </div>
 
-          {/* 하단 2열: 네비게이션 버튼 2개 */}
           <button
             onClick={() => navigate("/type-select")}
             className="w-full bg-blue-50 text-[#0052CC] border border-blue-100 py-2.5 rounded-xl text-xs font-bold hover:bg-blue-100 transition"
