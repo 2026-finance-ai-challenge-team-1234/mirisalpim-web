@@ -93,7 +93,7 @@ jobs:
                   load: true
                   tags: mirisalpim-web:ci
                   cache-from: type=gha
-                  cache-to: type=gha,mode=max
+                  cache-to: type=gha,mode=max,ignore-error=true
             - name: Verify scenario seed in final image
               run: >-
                   docker run --rm
