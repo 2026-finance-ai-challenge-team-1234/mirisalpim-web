@@ -27,12 +27,38 @@ from .config import AGENTS, OLLAMA_HOST, PROVIDER, model_for, validate_config
 from .cost import Usage
 
 # ── 임포트 시 1회 검증. 돈을 쓰기 전에 잘못된 조합을 잡는다 ──
+#
+# ⚠️ 여기서 sys.exit() 하지 않는다. 이 모듈은 CLI 뿐 아니라 Django 워커 안에서도
+# import 된다(웹 서비스가 ai_core 를 그대로 쓴다). import 가 프로세스를 끝내면
+# 환경변수 하나가 빠졌을 때 배포본이 부팅조차 못 하고 크래시 루프에 빠지는데,
+# 남는 단서는 stderr 로 지나간 몇 줄뿐이라 원인을 찾기 어렵다.
+#
+# 대신 실제로 모델을 부르는 순간(chat)에 예외를 던진다. "돈이 나가기 전에 막는다"
+# 는 목적은 그대로다 - 요청을 보내기 전에 걸리고, 메시지도 그대로 전달된다.
 _problems = validate_config()
 for _p in _problems:
     _tag = "\x1b[31m[설정 오류]\x1b[0m" if _p.level == "error" else "\x1b[33m[설정 경고]\x1b[0m"
     print(f"{_tag} {_p.message}", file=sys.stderr)
-if any(p.level == "error" for p in _problems):
-    sys.exit(1)
+
+_CONFIG_ERRORS = [_p for _p in _problems if _p.level == "error"]
+
+
+class ConfigError(RuntimeError):
+    """설정이 잘못돼 모델을 호출할 수 없는 상태.
+
+    호출부가 "모델 응답 실패"와 구분해서 다룰 수 있도록 별도 타입으로 둔다.
+    이 예외는 재시도해도 똑같이 실패한다 - 사람이 환경변수를 고쳐야 한다.
+    """
+
+
+def raise_for_config() -> None:
+    """설정 오류가 있으면 호출 직전에 막는다."""
+    if not _CONFIG_ERRORS:
+        return
+    raise ConfigError(
+        "LLM 설정 오류로 모델을 호출할 수 없습니다.\n"
+        + "\n".join(problem.message for problem in _CONFIG_ERRORS)
+    )
 
 
 #: Anthropic 전용 튜닝. 지연을 낮추면서 <thinking> 누출을 피한다
@@ -78,6 +104,7 @@ def chat(
     on_delta: Callable[[str], None] | None = None,
 ) -> ChatResult:
     """역할만 넘기면 config.py 에서 모델·토큰·튜닝을 알아서 고른다"""
+    raise_for_config()
     cfg = AGENTS[role]
     model = model_for(role)
     fn = _PROVIDER_FN[PROVIDER]
