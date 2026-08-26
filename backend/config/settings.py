@@ -17,6 +17,7 @@ import dj_database_url
 from dotenv import load_dotenv
 
 load_dotenv()
+IS_TEST = "test" in sys.argv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -53,6 +54,8 @@ ALLOWED_HOSTS = [
     ).split(",")
     if host.strip()
 ]
+if IS_TEST and "testserver" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("testserver")
 
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
@@ -176,5 +179,5 @@ CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_AGE = 1800
 SESSION_SAVE_EVERY_REQUEST = True
 
-SECURE_SSL_REDIRECT = not DEBUG
+SECURE_SSL_REDIRECT = not DEBUG and not IS_TEST
 SECURE_HSTS_SECONDS = 0  # 초기 배포 검증 후 점진적으로 활성화
