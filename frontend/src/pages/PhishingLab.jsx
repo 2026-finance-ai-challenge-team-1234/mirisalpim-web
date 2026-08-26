@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import PageHeader from "../components/PageHeader";
 
 // ────────────────────────────────────────────────────────────
 // 공용 소형 컴포넌트
 // ────────────────────────────────────────────────────────────
 
-// 요소에 붙는 번호 마커
 function Marker({ id, label, isDanger, selected, onClick, className = "" }) {
   return (
     <button
@@ -23,7 +23,6 @@ function Marker({ id, label, isDanger, selected, onClick, className = "" }) {
   );
 }
 
-// 마커 클릭 후 뜨는 설명 박스
 function InfoBox({ isDanger, children, onClose }) {
   return (
     <div
@@ -46,7 +45,6 @@ function InfoBox({ isDanger, children, onClose }) {
   );
 }
 
-// 상단 진행 단계 표시
 function StepBadge({ step, total }) {
   return (
     <span className="text-[10px] font-extrabold text-[#0052CC] bg-blue-50 px-2 py-0.5 rounded-md">
@@ -55,9 +53,6 @@ function StepBadge({ step, total }) {
   );
 }
 
-// ────────────────────────────────────────────────────────────
-// 퀴즈 단계 마커 데이터
-// ────────────────────────────────────────────────────────────
 const QUIZ_MARKERS = {
   url: {
     label: 1,
@@ -101,22 +96,18 @@ const SUMMARY_ITEMS = [
 
 export default function PhishingLab() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(0); // 0 인트로 ~ 5 요약
+  const [step, setStep] = useState(0);
   const TOTAL_STEPS = 4;
 
-  // Step 1: 퀴즈
   const [selected, setSelected] = useState([]);
   const foundDangerCount = selected.filter((id) => QUIZ_MARKERS[id].isDanger).length;
 
-  // Step 2: 로그인
   const [loginId, setLoginId] = useState("hong1234");
   const [loginPw, setLoginPw] = useState("test8282!");
   const [loginSubmitted, setLoginSubmitted] = useState(false);
 
-  // Step 3: 대시보드 결제 유도
   const [paymentClicked, setPaymentClicked] = useState(false);
 
-  // Step 4: 인증번호 탈취
   const [otpValue, setOtpValue] = useState("");
   const [otpSubmitted, setOtpSubmitted] = useState(false);
   const [otpTimer, setOtpTimer] = useState(180);
@@ -149,27 +140,12 @@ export default function PhishingLab() {
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl sm:rounded-3xl border-0 sm:border border-gray-100 flex flex-col p-6 relative overflow-y-auto">
 
-        {/* 100% 오차 없는 정중앙 헤더 구조 */}
-        <header className="relative flex items-center justify-between pt-1 pb-4 mb-2 shrink-0 h-9">
-          <button onClick={goBack} className="text-[#191F28] hover:opacity-70 transition p-1 -ml-1 z-10">
-            <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
+        <PageHeader
+          onBack={goBack}
+          padding="pt-1 pb-4 mb-2"
+          rightContent={step > 0 ? <StepBadge step={step} total={TOTAL_STEPS} /> : null}
+        />
 
-          <h1
-            onClick={() => navigate("/")}
-            className="absolute left-1/2 -translate-x-1/2 text-lg font-extrabold text-[#0052CC] cursor-pointer tracking-tight whitespace-nowrap z-0"
-          >
-            미리살핌
-          </h1>
-
-          <div className="z-10">
-            {step > 0 ? <StepBadge step={step} total={TOTAL_STEPS} /> : <div className="w-5" />}
-          </div>
-        </header>
-
-        {/* STEP 0: 인트로 */}
         {step === 0 && (
           <div className="flex-1 flex flex-col">
             <span className="text-[11px] font-bold text-amber-700 bg-amber-100/70 px-2.5 py-1 rounded-md self-start">
@@ -214,7 +190,6 @@ export default function PhishingLab() {
           </div>
         )}
 
-        {/* STEP 1: 퀴즈 */}
         {step === 1 && (
           <div className="flex-1 flex flex-col">
             <h2 className="text-base font-extrabold text-[#191F28] mb-1">화면에서 위험한 부분을 찾아보세요</h2>
@@ -319,7 +294,6 @@ export default function PhishingLab() {
           </div>
         )}
 
-        {/* STEP 2: 로그인 */}
         {step === 2 && (
           <div className="flex-1 flex flex-col">
             <h2 className="text-base font-extrabold text-[#191F28] mb-1">아래 정보로 로그인해보세요</h2>
@@ -389,7 +363,6 @@ export default function PhishingLab() {
           </div>
         )}
 
-        {/* STEP 3: 대시보드 */}
         {step === 3 && (
           <div className="flex-1 flex flex-col">
             <h2 className="text-base font-extrabold text-[#191F28] mb-1">로그인에 성공했습니다</h2>
@@ -455,7 +428,6 @@ export default function PhishingLab() {
           </div>
         )}
 
-        {/* STEP 4: 인증번호 */}
         {step === 4 && (
           <div className="flex-1 flex flex-col">
             <h2 className="text-base font-extrabold text-[#191F28] mb-1">결제 인증이 필요합니다</h2>
@@ -521,7 +493,6 @@ export default function PhishingLab() {
           </div>
         )}
 
-        {/* STEP 5: 요약 */}
         {step === 5 && (
           <div className="flex-1 flex flex-col">
             <span className="text-[11px] font-bold text-[#0052CC] bg-blue-50 px-2.5 py-1 rounded-md self-start">

@@ -1,11 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-
-// ────────────────────────────────────────────────────────────
-// 코드값 정의: recommendation_engine.py의 AGE_CODES / ACTIVITY_CODES /
-// CONCERN_CODES / HABIT_CODES와 1:1로 맞춰져 있음. 백엔드 계약이므로
-// label(화면 표시 문구)은 자유롭게 바꿔도 되지만 code는 절대 바꾸면 안 됨.
-// ────────────────────────────────────────────────────────────
+import PageHeader from "../components/PageHeader";
 
 const q1Options = [
   { code: "AGE_10", label: "10대" },
@@ -28,7 +23,6 @@ const q2Options = [
   { code: "ACT_NONE", label: "해당 없음", icon: "❓" },
 ];
 
-// 최종 확정 로직(survey-logic-final.md) 기준 18개 (17개 + 모르겠어요)
 const q3Options = [
   { code: "CONCERN_01", label: '📞 "고객님 계좌가 범죄에 연루되었습니다."' },
   { code: "CONCERN_02", label: '👨‍👩‍👧 "가족이 급하게 돈을 요청해요."' },
@@ -65,7 +59,6 @@ export default function Survey() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
 
-  // ⚠️ 이제 answers 안의 값들은 화면 표시 문구가 아니라 코드값(AGE_60 등)임
   const [answers, setAnswers] = useState({
     age: "",
     activities: [],
@@ -91,8 +84,6 @@ export default function Survey() {
       return;
     }
 
-    // 다른 화면(Report 등)이 아직 localStorage 방식을 쓰고 있어서 호환용으로 유지.
-    // 실제 다음 화면(SurveyLoading)으로의 전달은 아래 navigate state로 함.
     localStorage.setItem("userSurveyData", JSON.stringify(answers));
     navigate("/survey-loading", { state: { surveyAnswers: answers } });
   };
@@ -110,21 +101,7 @@ export default function Survey() {
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl flex flex-col justify-between p-6 relative overflow-y-auto">
 
         <div>
-          <header className="flex justify-between items-center pt-2 pb-4 mb-2">
-            <button
-              onClick={handleBack}
-              aria-label="뒤로가기"
-              className="text-[#191F28] hover:opacity-70 transition p-1 -ml-1"
-            >
-              <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </button>
-            <h1 onClick={() => navigate("/")} className="text-lg font-extrabold text-[#0052CC] cursor-pointer">
-              미리살핌
-            </h1>
-            <div className="w-5"></div>
-          </header>
+          <PageHeader onBack={handleBack} />
 
           <section className="mb-4">
             <h2 className="text-[20px] font-extrabold text-[#191F28] leading-[1.3] mb-1 break-keep">
@@ -139,7 +116,6 @@ export default function Survey() {
             Q{step}
           </div>
 
-          {/* Q1: 연령대 */}
           {step === 1 && (
             <div>
               <h3 className="text-sm font-bold text-[#191F28] mb-4">연령대를 알려주세요.</h3>
@@ -161,7 +137,6 @@ export default function Survey() {
             </div>
           )}
 
-          {/* Q2: 금융/온라인 활동 */}
           {step === 2 && (
             <div>
               <h3 className="text-sm font-bold text-[#191F28] mb-1">평소 어떤 활동을 자주 하시나요?</h3>
@@ -188,7 +163,6 @@ export default function Survey() {
             </div>
           )}
 
-          {/* Q3: 취약 상황 */}
           {step === 3 && (
             <div>
               <h3 className="text-sm font-bold text-[#191F28] mb-1">가장 당황스러울 것 같은 상황은?</h3>
@@ -214,7 +188,6 @@ export default function Survey() {
             </div>
           )}
 
-          {/* Q4: 행동 성향 */}
           {step === 4 && (
             <div>
               <h3 className="text-sm font-bold text-[#191F28] mb-1">모르는 번호로 금융 연락이 오면 나는..</h3>
@@ -237,7 +210,6 @@ export default function Survey() {
             </div>
           )}
 
-          {/* Q5: 이름 입력 (코드화 대상 아님, 원문 그대로) */}
           {step === 5 && (
             <div>
               <h3 className="text-sm font-bold text-[#191F28] mb-1">마지막으로 이름을 알려주세요.</h3>

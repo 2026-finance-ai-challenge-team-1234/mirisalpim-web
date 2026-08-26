@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import PageHeader from "../components/PageHeader";
 
 function readStoredUserName() {
   try {
@@ -22,7 +23,6 @@ export default function CallIncoming() {
   const [userName] = useState(readStoredUserName);
   const [prevTrack] = useState(readPrevTrack);
 
-  // [거절] 버튼 스마트 복귀
   const handleDecline = () => {
     if (prevTrack === "ai") {
       navigate("/recommendation");
@@ -40,20 +40,7 @@ export default function CallIncoming() {
       <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl flex flex-col justify-between p-6 relative overflow-hidden">
 
         <div>
-          {/* Top Header */}
-          <header className="flex justify-between items-center pt-2 pb-4 mb-2">
-            <h1
-              onClick={() => navigate("/")}
-              className="text-lg font-extrabold text-[#0052CC] cursor-pointer tracking-tight"
-            >
-              미리살핌
-            </h1>
-            <button aria-label="알림" className="text-[#191F28] hover:opacity-70 transition">
-              <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/>
-              </svg>
-            </button>
-          </header>
+          <PageHeader />
 
           {/* Simulation Notice Tag */}
           <div className="flex justify-center mb-8">
