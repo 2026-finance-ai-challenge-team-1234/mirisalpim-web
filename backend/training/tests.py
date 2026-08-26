@@ -1,6 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest import skipUnless
 from unittest.mock import patch
 
 from ai_core.engine import Engine, TurnOutcome, load_scenario, start_session
@@ -679,7 +680,8 @@ class SubmitTurnTests(TestCase):
             Session.objects.get(pk=session_id).risky_actions.count(), 1
         )
 
-    def test_does_not_repeat_the_same_warning_type(self):
+    def test_warns_about_each_kind_of_personal_info(self):
+        """주민번호와 계좌번호는 알려줄 내용이 달라 둘 다 나가야 한다."""
         session_id = self.start_training()
 
         payload = self.turn(
@@ -688,8 +690,33 @@ class SubmitTurnTests(TestCase):
             risky_actions=["personal_info"],
         ).json()
 
-        types = [w["type"] for w in payload["riskWarnings"]]
-        self.assertEqual(types, ["personalInfo"])
+        messages = " / ".join(w["message"] for w in payload["riskWarnings"])
+        self.assertIn("주민등록번호", messages)
+        self.assertIn("계좌번호", messages)
+
+    def test_judge_does_not_repeat_what_the_regex_already_said(self):
+        """정규식이 종류까지 특정했으면 판정기의 포괄적 personal_info 는 생략한다."""
+        session_id = self.start_training()
+
+        payload = self.turn(
+            session_id,
+            "주민번호 900101-1234567 입니다",
+            risky_actions=["personal_info"],
+        ).json()
+
+        self.assertEqual(len(payload["riskWarnings"]), 1)
+        self.assertIn("주민등록번호", payload["riskWarnings"][0]["message"])
+
+    def test_does_not_repeat_an_identical_signal(self):
+        session_id = self.start_training()
+
+        payload = self.turn(
+            session_id,
+            "네 설치할게요",
+            risky_actions=["app_install", "app_install"],
+        ).json()
+
+        self.assertEqual(len(payload["riskWarnings"]), 1)
 
     def test_another_anonymous_client_gets_404(self):
         session_id = self.start_training()
@@ -827,9 +854,23 @@ class GradingTests(TestCase):
         missed = grade(scenario, state).missed_tell_points
 
         turns = {tp.id: tp.first_detectable_turn for tp in scenario.tell_points}
-        self.assertTrue(all(turns[tp] <= 3 for tp in missed))
+        self.assertTrue(all(turns[tp] < 3 for tp in missed))
         self.assertIn("tp1", missed)
         self.assertNotIn("tp5", missed)
+
+    def test_immediate_detection_missed_nothing(self):
+        """S 등급인데 리포트가 '신호를 지나쳤다'고 말하면 안 된다."""
+        scenario, state = self.make("sc-02", judged_turn=1, is_scam_guess=True)
+
+        result = grade(scenario, state)
+
+        self.assertEqual(result.grade, "S")
+        self.assertEqual(result.missed_tell_points, [])
+
+    def test_late_detection_still_lists_missed_tell_points(self):
+        scenario, state = self.make("sc-02", judged_turn=10, is_scam_guess=True)
+
+        self.assertIn("tp1", grade(scenario, state).missed_tell_points)
 
 
 class SubmitJudgmentTests(TestCase):
@@ -855,6 +896,15 @@ class SubmitJudgmentTests(TestCase):
             content_type="application/json",
         )
 
+    def delay_judgment_to_turn(self, session_id, turn):
+        """LLM 없이 판단 시점만 뒤로 민다.
+
+        채점은 session.turn 을 판단 턴으로 삼는다. 시작 직후(1턴)에 제출하면
+        최초 판별 가능 시점과 같아 '지나친 단서 없음'이 되므로, 놓친 단서가
+        실리는 경로를 보려면 턴이 진행된 상태를 만들어야 한다.
+        """
+        Session.objects.filter(pk=session_id).update(turn=turn)
+
     def test_returns_a_complete_report(self):
         session_id = self.start_training()
 
@@ -878,6 +928,7 @@ class SubmitJudgmentTests(TestCase):
     def test_missed_tell_points_carry_their_explanation(self):
         """설명은 시나리오의 why 를 그대로 쓴다 - LLM 생성이 필요 없다."""
         session_id = self.start_training()
+        self.delay_judgment_to_turn(session_id, 10)
 
         missed = self.judge(session_id).json()["missedTellPoints"]
 
@@ -915,6 +966,7 @@ class SubmitJudgmentTests(TestCase):
 
     def test_persists_grade_and_report(self):
         session_id = self.start_training()
+        self.delay_judgment_to_turn(session_id, 10)
 
         payload = self.judge(session_id).json()
 
@@ -1247,3 +1299,34 @@ class SeedScenariosTests(TestCase):
         self.assertFalse(
             TellPoint.objects.filter(scenario_id=self.CARD_ID, tp_key="tp6").exists()
         )
+
+
+class ApiErrorContractTests(TestCase):
+    """API 하위의 오류는 항상 JSON 계약을 지킨다.
+
+    기본 404 는 HTML 이라 프론트 client.js 의 res.json() 이 깨지고, 경로 오타든
+    엔드포인트 누락이든 전부 code "UNKNOWN" 으로 뭉개진다.
+    """
+
+    def test_unknown_api_path_returns_json(self):
+        response = self.client.get("/api/v1/there-is-no-such-endpoint")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
+
+    def test_api_error_carries_a_request_id(self):
+        """응답의 requestId 를 서버 로그와 맞춰볼 수 있어야 한다."""
+        response = self.client.get("/api/v1/there-is-no-such-endpoint")
+
+        self.assertTrue(response.json()["error"]["requestId"].startswith("req_"))
+
+    @skipUnless(settings.FRONTEND_DIST.exists(), "프론트 빌드 결과물이 있어야 확인 가능")
+    def test_unknown_page_path_still_renders_the_spa(self):
+        """SPA 라우트는 404 가 아니라 index.html 이어야 한다 (딥링크·새로고침).
+
+        handler404 를 붙이면서 SPA 폴백까지 JSON 으로 덮지 않았는지 확인한다.
+        """
+        response = self.client.get("/report")
+
+        self.assertEqual(response.status_code, 200)
