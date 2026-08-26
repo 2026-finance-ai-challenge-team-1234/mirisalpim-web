@@ -181,3 +181,32 @@ SESSION_SAVE_EVERY_REQUEST = True
 
 SECURE_SSL_REDIRECT = not DEBUG and not IS_TEST
 SECURE_HSTS_SECONDS = 0  # 초기 배포 검증 후 점진적으로 활성화
+
+
+# 로깅
+# Railway 는 컨테이너 stdout 을 그대로 수집하므로 콘솔 핸들러 하나면 된다.
+# error_response 가 만드는 requestId 를 여기로 흘려보내야 배포 후에 "사용자가 본
+# 오류"와 "서버 로그"를 맞춰볼 수 있다. 그게 없으면 requestId 는 장식일 뿐이다.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "{levelname} {asctime} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+    "loggers": {
+        # 테스트는 4xx·5xx 를 일부러 만들어 검증한다. 그 로그가 그대로 찍히면
+        # 실제 실패가 묻히므로 테스트에서만 잠재운다.
+        "training": {"level": "CRITICAL" if IS_TEST else "INFO"},
+        "django.request": {"level": "CRITICAL" if IS_TEST else "WARNING"},
+    },
+}

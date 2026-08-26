@@ -58,7 +58,7 @@ def grade(scenario, state):
             guessed_scam, judged_turn, t_first, delta, risky_actions, has_critical
         )
 
-    missed = _missed_tell_points(scenario, judged_turn)
+    missed = _missed_tell_points(scenario, judged_turn, delta)
     is_correct = guessed_scam is True
 
     if not is_correct:
@@ -115,11 +115,28 @@ def _grade_normal(guessed_scam, judged_turn, t_first, delta, risky_actions, has_
     )
 
 
-def _missed_tell_points(scenario, judged_turn):
-    """판단 시점까지 노출됐는데 훈련생이 지나친 단서."""
+def _missed_tell_points(scenario, judged_turn, delta):
+    """판단하기까지 지나쳐 보낸 단서.
+
+    ⚠️ "판단 시점까지 노출된 단서" 를 그대로 쓰면 안 된다. 판별 가능해지자마자
+    알아채 S 등급을 받은 훈련생에게도 리포트가 "N번째 턴 신호를 지나쳤습니다"
+    (diagnosis._weakness) 라고 말하게 된다. 등급과 정면으로 모순된다.
+
+    훈련생이 실제로 무엇을 알아챘는지 관찰하는 주체가 아직 없어서 - state 의
+    hit_tell_points 는 "훈련생이 알아챘다" 가 아니라 "턴 번호상 노출됐다" 는
+    뜻이다 - 판단 시점으로 근사한다. 두 가지를 반영한다.
+
+    · 최초 판별 가능 시점 직후(delta<=1)에 알아챘으면 지나친 단서는 없다.
+    · 판단한 바로 그 턴에 처음 드러난 단서는 지나친 것이 아니다 (< 로 자른다).
+
+    판정기에 "훈련생이 이 단서를 언급했는가" 가 추가되면 이 근사를 걷어낸다.
+    """
+    if delta is not None and delta <= 1:
+        return []
+
     limit = judged_turn if judged_turn is not None else float("inf")
     return [
         tp.id
         for tp in scenario.tell_points
-        if tp.signal_type == "risk" and tp.first_detectable_turn <= limit
+        if tp.signal_type == "risk" and tp.first_detectable_turn < limit
     ]

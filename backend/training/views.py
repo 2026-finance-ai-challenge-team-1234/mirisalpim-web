@@ -277,15 +277,39 @@ RISK_WARNINGS = {
 }
 
 
+#: 정규식(pii.py)이 값의 종류까지 특정해서 잡아낸 항목들. 판정기의 포괄적인
+#: personal_info 와 같은 사실을 가리킨다.
+SPECIFIC_PII_KINDS = {
+    "resident_registration_number",
+    "account_number",
+    "card_number",
+    "phone_number",
+}
+
+
 def _risk_warnings(kinds):
-    """중복 유형은 한 번만 내보낸다."""
+    """같은 신호가 반복되면 한 번만 내보낸다.
+
+    ⚠️ 매핑된 type 이 아니라 원래 신호 기준으로 묶는다. 주민등록번호와 계좌번호는
+    둘 다 personalInfo 로 나가지만 알려줘야 할 내용이 다르다("이 정보로 대출이
+    실행됩니다" vs "대포통장으로 쓰일 수 있습니다"). type 으로 묶으면 훈련생이
+    한 문장에서 둘을 같이 말했을 때 뒤엣것이 통째로 사라진다.
+
+    다만 정규식이 종류까지 특정해 알린 경우, 판정기의 포괄적인 personal_info 는
+    같은 말을 한 번 더 하는 것이라 생략한다.
+    """
+    kinds = list(kinds)
+    has_specific_pii = SPECIFIC_PII_KINDS.intersection(kinds)
+
     warnings = []
     seen = set()
     for kind in kinds:
-        mapped = RISK_WARNINGS.get(kind)
-        if mapped is None or mapped[0] in seen:
+        if kind == "personal_info" and has_specific_pii:
             continue
-        seen.add(mapped[0])
+        mapped = RISK_WARNINGS.get(kind)
+        if mapped is None or kind in seen:
+            continue
+        seen.add(kind)
         warnings.append({"type": mapped[0], "message": mapped[1]})
     return warnings
 
@@ -502,7 +526,8 @@ def _turn_events(
     yield _sse("accepted", {"turnNo": loaded_turn + 1})
 
     # 정규식으로 잡은 개인정보는 LLM 을 기다릴 필요가 없다 - 즉시 개입한다 (F-14).
-    for warning in _risk_warnings(detected_pii):
+    pii_warnings = _risk_warnings(detected_pii)
+    for warning in pii_warnings:
         yield _sse("riskWarning", warning)
 
     deltas = queue.Queue()
@@ -537,9 +562,12 @@ def _turn_events(
 
     outcome = box["outcome"]
 
-    # 판정기 결과는 step() 이 끝나야 알 수 있어서 여기서 내보낸다.
-    for warning in _risk_warnings(outcome.risky_actions):
-        if warning["type"] not in {w["type"] for w in _risk_warnings(detected_pii)}:
+    # 판정기 결과는 step() 이 끝나야 알 수 있어서 여기서 내보낸다. 동기 경로
+    # (submit_turn)와 같은 결과가 되도록 두 신호를 합쳐서 계산한 뒤, 앞에서 이미
+    # 보낸 것만 뺀다.
+    already_sent = {warning["message"] for warning in pii_warnings}
+    for warning in _risk_warnings(detected_pii + outcome.risky_actions):
+        if warning["message"] not in already_sent:
             yield _sse("riskWarning", warning)
 
     try:
