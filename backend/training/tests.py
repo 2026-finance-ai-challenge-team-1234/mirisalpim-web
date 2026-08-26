@@ -1,4 +1,6 @@
 import json
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from ai_core.engine import Engine, TurnOutcome, load_scenario, start_session
@@ -11,12 +13,13 @@ from ai_core.state import (
     record_turn,
     try_advance_stage,
 )
+from django.conf import settings
 from django.core.management import call_command
 from django.test import Client, TestCase
 
 from .engine_state import load_state, save_state
 from .grading import first_detectable_turn, grade
-from .models import Scenario, Session
+from .models import Scenario, Session, Stage, TellPoint
 from .selection import SELECTION_KEY
 from .views import ANON_CLIENT_ID_KEY, ConcurrentTurnError, _commit_turn
 
@@ -1145,3 +1148,102 @@ class TurnStreamTests(TestCase):
             )
 
         self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 1)
+
+
+class SeedScenariosTests(TestCase):
+    """시나리오 적재는 기동할 때마다 돌아도 안전해야 한다.
+
+    Dockerfile CMD 가 컨테이너를 띄울 때마다 seed_scenarios 를 부른다. 진행됐던
+    세션이 남아 있는 배포 DB 에서도 실패하지 않아야 재배포가 막히지 않는다.
+    """
+
+    CARD_ID = "sc-02"
+
+    def counts(self):
+        return (
+            Scenario.objects.count(),
+            Stage.objects.count(),
+            TellPoint.objects.count(),
+        )
+
+    def seed(self, directory=None):
+        args = ["seed_scenarios"]
+        kwargs = {"verbosity": 0}
+        if directory:
+            kwargs["directory"] = str(directory)
+        call_command(*args, **kwargs)
+
+    def write_card(self, directory, mutate):
+        """실제 카드 하나를 임시 디렉터리에 복사하면서 mutate 로 고친다."""
+        source = Path(settings.SCENARIO_SEED_DIR) / f"{self.CARD_ID}.json"
+        card = json.loads(source.read_text(encoding="utf-8"))
+        mutate(card)
+        (Path(directory) / f"{self.CARD_ID}.json").write_text(
+            json.dumps(card, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def test_reseeding_does_not_duplicate_rows(self):
+        self.seed()
+        first = self.counts()
+
+        self.seed()
+
+        self.assertEqual(self.counts(), first)
+
+    def test_reseeding_survives_a_session_that_already_used_a_stage(self):
+        """Turn.stage 가 PROTECT 라 예전 구현은 여기서 ProtectedError 로 죽었다."""
+        self.seed()
+        scenario = load_scenario(self.CARD_ID)
+        engine = start_session(scenario, difficulty="normal")
+        session = Session.objects.create(
+            session_id=engine.state.session_id,
+            scenario_id=self.CARD_ID,
+            anon_client_id="anon-test",
+            entry_path="direct",
+            status="active",
+            difficulty=engine.state.difficulty,
+        )
+        save_state(session, engine.state)
+        self.assertEqual(session.turns.count(), 1)
+
+        self.seed()  # 재배포 시점
+
+        self.assertEqual(Session.objects.get(pk=session.pk).turns.count(), 1)
+        self.assertTrue(Stage.objects.filter(scenario_id=self.CARD_ID).exists())
+
+    def test_reseeding_applies_edited_card_content(self):
+        self.seed()
+
+        with tempfile.TemporaryDirectory() as directory:
+            self.write_card(
+                directory, lambda card: card["stages"][0].update(objective="바뀐 목표")
+            )
+            self.seed(directory)
+
+        stage = Stage.objects.get(scenario_id=self.CARD_ID, order_index=0)
+        self.assertEqual(stage.objective, "바뀐 목표")
+
+    def test_stage_removed_from_the_card_is_deleted(self):
+        self.seed()
+
+        dropped = {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            def drop_last_stage(card):
+                key = card["stages"].pop()["id"]
+                card["tell_points"] = [
+                    tp for tp in card["tell_points"] if tp["stage"] != key
+                ]
+                dropped["key"] = key
+
+            self.write_card(directory, drop_last_stage)
+            self.seed(directory)
+
+        self.assertFalse(
+            Stage.objects.filter(
+                scenario_id=self.CARD_ID, stage_key=dropped["key"]
+            ).exists()
+        )
+        self.assertFalse(
+            TellPoint.objects.filter(scenario_id=self.CARD_ID, tp_key="tp6").exists()
+        )

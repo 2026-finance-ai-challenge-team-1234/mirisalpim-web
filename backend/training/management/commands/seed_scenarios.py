@@ -128,39 +128,8 @@ class Command(BaseCommand):
             },
         )
 
-        # 단계 구성은 통째로 갈아끼운다 — 순서(order_index)가 배열 순서를 그대로 따라야 한다
-        try:
-            scenario.stages.all().delete()
-        except ProtectedError as e:
-            raise CommandError(
-                f"{card['scenario_id']}: 진행 중이던 세션이 이 시나리오의 단계를 참조하고 있어 "
-                f"교체할 수 없습니다. 세션을 정리한 뒤 다시 실행하세요. ({e})"
-            ) from e
-
-        stages = {}
-        for i, s in enumerate(card["stages"]):
-            stages[s["id"]] = Stage.objects.create(
-                scenario=scenario,
-                stage_key=s["id"],
-                order_index=i,
-                objective=s["objective"],
-                opening=s.get("opening"),
-                min_turns=s["min_turns"],
-                tactics=s.get("tactics", []),
-                advance_when=s.get("advance_when", []),
-            )
-
-        for tp in card["tell_points"]:
-            TellPoint.objects.create(
-                scenario=scenario,
-                stage=stages[tp["stage"]],
-                tp_key=tp["id"],
-                signal_type=tp.get("signal_type", "risk"),
-                trigger=tp["trigger"],
-                why=tp["why"],
-                weight=tp["weight"],
-                first_detectable_turn=tp["first_detectable_turn"],
-            )
+        stages = self._sync_stages(scenario, card)
+        self._sync_tell_points(scenario, card, stages)
 
         ignored = sorted(set(card) - CONSUMED_KEYS)
         line = f"  {card['scenario_id']} ({card['track']}) stages={len(stages)} tp={len(card['tell_points'])}"
@@ -168,3 +137,69 @@ class Command(BaseCommand):
             line += f" — 무시된 필드: {', '.join(ignored)}"
         if verbosity >= 2 or ignored:
             self.stdout.write(line)
+
+    def _sync_stages(self, scenario, card: dict) -> dict:
+        """단계를 stage_key 기준으로 갱신한다.
+
+        ⚠️ 통째로 지우고 다시 만들지 않는다. Turn.stage 가 PROTECT 라서, 한 번이라도
+        진행된 세션이 있으면 delete() 가 ProtectedError 를 낸다. 이 명령은 컨테이너가
+        기동할 때마다 돌기 때문에(Dockerfile CMD) 그러면 재배포부터 서비스가 못 뜬다.
+        갱신 방식이면 참조는 그대로 두고 내용만 바뀐다.
+        """
+        stages = {}
+        for i, s in enumerate(card["stages"]):
+            stage, _ = Stage.objects.update_or_create(
+                scenario=scenario,
+                stage_key=s["id"],
+                defaults={
+                    "order_index": i,
+                    "objective": s["objective"],
+                    "opening": s.get("opening"),
+                    "min_turns": s["min_turns"],
+                    "tactics": s.get("tactics", []),
+                    "advance_when": s.get("advance_when", []),
+                },
+            )
+            stages[s["id"]] = stage
+
+        self._delete_removed(
+            scenario.stages.exclude(stage_key__in=stages), card["scenario_id"], "단계"
+        )
+        return stages
+
+    def _sync_tell_points(self, scenario, card: dict, stages: dict) -> None:
+        """단서를 tp_key 기준으로 갱신한다.
+
+        예전에는 단계가 CASCADE 로 지워질 때 단서도 함께 사라져서 create 만으로
+        충분했다. 이제 단계가 남으므로 여기도 갱신해야 unique(scenario, tp_key) 에
+        걸리지 않는다.
+        """
+        for tp in card["tell_points"]:
+            TellPoint.objects.update_or_create(
+                scenario=scenario,
+                tp_key=tp["id"],
+                defaults={
+                    "stage": stages[tp["stage"]],
+                    "signal_type": tp.get("signal_type", "risk"),
+                    "trigger": tp["trigger"],
+                    "why": tp["why"],
+                    "weight": tp["weight"],
+                    "first_detectable_turn": tp["first_detectable_turn"],
+                },
+            )
+
+        keys = [tp["id"] for tp in card["tell_points"]]
+        # SessionTellPointHit 이 CASCADE 라 빠진 단서의 기록도 함께 정리된다
+        self._delete_removed(
+            scenario.tell_points.exclude(tp_key__in=keys), card["scenario_id"], "단서"
+        )
+
+    def _delete_removed(self, queryset, scenario_id: str, label: str) -> None:
+        """카드에서 빠진 행을 지운다. 참조가 걸려 있으면 무엇을 치우면 되는지 알린다."""
+        try:
+            queryset.delete()
+        except ProtectedError as e:
+            raise CommandError(
+                f"{scenario_id}: 카드에서 빠진 {label}를 진행 중이던 세션이 참조하고 있어 "
+                f"삭제할 수 없습니다. 세션을 정리한 뒤 다시 실행하세요. ({e})"
+            ) from e
