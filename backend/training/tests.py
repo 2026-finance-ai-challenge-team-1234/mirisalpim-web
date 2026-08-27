@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import tempfile
 from pathlib import Path
 from unittest import skipUnless
@@ -17,12 +18,14 @@ from ai_core.state import (
     try_advance_stage,
 )
 from django.conf import settings
+from django.core.cache import cache
 from django.core.management import call_command
 from django.test import Client, TestCase, TransactionTestCase
 
 from .engine_state import load_state, save_state
 from .grading import first_detectable_turn, grade
 from .models import Scenario, Session, Stage, TellPoint
+from .throttle import TURN_RATE_LIMIT, TURN_RATE_WINDOW_SECONDS
 from .selection import SELECTION_KEY
 from .views import ANON_CLIENT_ID_KEY, ConcurrentTurnError, _commit_turn
 
@@ -1380,3 +1383,178 @@ class ApiErrorContractTests(TestCase):
         response = self.client.get("/report")
 
         self.assertEqual(response.status_code, 200)
+
+
+class TurnThrottleTests(TestCase):
+    """API 설계 9절 - 레이트 리밋, 4-6 - Idempotency-Key."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+
+    def start_training(self):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        return self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+    def turn(self, session_id, text="안녕하세요", headers=None):
+        with patch(
+            "training.views.step",
+            side_effect=lambda e, t, **kw: fake_step(e, t),
+        ):
+            return self.client.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data={"text": text},
+                content_type="application/json",
+                headers=headers or {},
+            )
+
+    def test_allows_requests_under_the_limit(self):
+        """한도 안에서는 429 가 나오지 않는다.
+
+        200 을 기대하지 않는 이유: fake_step 이 턴을 2씩 올려서 20회를 돌리면
+        중간에 max_turns 에 닿아 SESSION_ENDED(409)가 난다. 여기서 확인할 것은
+        레이트 리밋이 걸리지 않는다는 것뿐이다.
+        """
+        session_id = self.start_training()
+
+        codes = [self.turn(session_id).status_code for _ in range(TURN_RATE_LIMIT)]
+
+        self.assertNotIn(429, codes)
+
+    def test_rejects_requests_over_the_limit(self):
+        session_id = self.start_training()
+        for _ in range(TURN_RATE_LIMIT):
+            self.turn(session_id)
+
+        response = self.turn(session_id)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["error"]["code"], "RATE_LIMITED")
+
+    def test_rate_limit_tells_the_client_when_to_retry(self):
+        session_id = self.start_training()
+        for _ in range(TURN_RATE_LIMIT):
+            self.turn(session_id)
+
+        response = self.turn(session_id)
+
+        self.assertEqual(response["Retry-After"], str(TURN_RATE_WINDOW_SECONDS))
+
+    def test_limit_is_per_anonymous_client(self):
+        """다른 사용자가 앞사람의 한도에 걸리면 안 된다."""
+        session_id = self.start_training()
+        for _ in range(TURN_RATE_LIMIT + 1):
+            self.turn(session_id)
+
+        other = Client()
+        other.get("/api/v1/bootstrap")
+        other.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(other.post("/api/v1/training-sessions").status_code, 201)
+
+    def test_retry_with_same_idempotency_key_does_not_advance_the_turn(self):
+        session_id = self.start_training()
+        headers = {"Idempotency-Key": "abc-123"}
+
+        first = self.turn(session_id, headers=headers).json()
+        second = self.turn(session_id, headers=headers).json()
+
+        self.assertEqual(first, second)
+        # opening + user + scammer. 두 번째 요청이 턴을 진행시켰다면 5건이 된다.
+        self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 3)
+
+    def test_different_idempotency_key_advances_the_turn(self):
+        session_id = self.start_training()
+
+        self.turn(session_id, headers={"Idempotency-Key": "key-1"})
+        self.turn(session_id, headers={"Idempotency-Key": "key-2"})
+
+        self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 5)
+
+    def test_without_the_header_each_request_is_a_new_turn(self):
+        session_id = self.start_training()
+
+        self.turn(session_id)
+        self.turn(session_id)
+
+        self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 5)
+
+
+class TurnTimeoutTests(TestCase):
+    """API 설계 9절 - 턴 처리 제한 시간."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+
+    def start_training(self):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        return self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+    def test_slow_model_becomes_a_timeout(self):
+        session_id = self.start_training()
+
+        def never_returns(engine, user_text, **kwargs):
+            time.sleep(5)
+
+        with patch("training.views.TURN_TIMEOUT_SECONDS", 0.2):
+            with patch("training.views.step", side_effect=never_returns):
+                response = self.client.post(
+                    f"/api/v1/training-sessions/{session_id}/turns",
+                    data={"text": "안녕하세요"},
+                    content_type="application/json",
+                )
+
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.json()["error"]["code"], "AI_TIMEOUT")
+
+    def test_timeout_does_not_advance_the_session(self):
+        session_id = self.start_training()
+
+        def never_returns(engine, user_text, **kwargs):
+            time.sleep(5)
+
+        with patch("training.views.TURN_TIMEOUT_SECONDS", 0.2):
+            with patch("training.views.step", side_effect=never_returns):
+                self.client.post(
+                    f"/api/v1/training-sessions/{session_id}/turns",
+                    data={"text": "안녕하세요"},
+                    content_type="application/json",
+                )
+
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.turn, 1)
+        self.assertEqual(session.turns.count(), 1)
+
+    def test_model_failure_becomes_a_502(self):
+        session_id = self.start_training()
+
+        with patch("training.views.step", side_effect=RuntimeError("모델 오류")):
+            response = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data={"text": "안녕하세요"},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_ERROR")
