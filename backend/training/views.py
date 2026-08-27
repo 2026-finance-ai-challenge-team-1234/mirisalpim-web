@@ -1,10 +1,11 @@
+import asyncio
 import json
-import queue
 import random
 import threading
 import uuid
 
 from ai_core.engine import Engine, load_scenario, start_session, step
+from asgiref.sync import sync_to_async
 from ai_core.types import UserJudgment as EngineJudgment
 from django.db import connections, transaction
 from django.http import StreamingHttpResponse
@@ -314,6 +315,34 @@ def _risk_warnings(kinds):
     return warnings
 
 
+def _open_turn(session_id, anon_client_id):
+    """턴 시작에 필요한 것만 짧은 트랜잭션에서 읽는다.
+
+    ⚠️ LLM 호출은 반드시 이 트랜잭션 밖에서 한다. 예전 구현은 step() 을 통째로
+    atomic + select_for_update 안에 두어서, 턴당 4~20초 동안 DB 커넥션과 행 잠금을
+    붙들고 있었다. 동시 사용자가 몇 명만 돼도 커넥션 풀이 마른다.
+
+    잠금 대신 _commit_turn() 의 낙관적 검사(turn 번호 비교)로 턴 겹침을 막는다.
+
+    반환: (컨텍스트, 오류응답). 둘 중 하나만 값이 있다.
+    """
+    with transaction.atomic():
+        session = (
+            Session.objects.select_for_update()
+            .filter(pk=session_id, anon_client_id=anon_client_id)
+            .first()
+        )
+        # 남의 익명 쿠키로 접근하면 존재 여부도 알려주지 않는다 (403 이 아니라 404).
+        if session is None:
+            return None, error_response(
+                "SESSION_NOT_FOUND", "훈련을 찾을 수 없습니다.", 404
+            )
+        if session.status != "active":
+            return None, error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
+
+        return (load_scenario(session.scenario_id), load_state(session), session.turn), None
+
+
 @require_POST
 def submit_turn(request, session_id):
     """P-05-02. 훈련생 발화 1턴을 처리하고 사기범의 다음 발화를 돌려준다.
@@ -322,8 +351,8 @@ def submit_turn(request, session_id):
       입력 검증 → PII 마스킹 → 판정기 → 코드 상태 승인 → 사기범 생성 → 안전 필터
     뒤의 네 단계는 ai_core.step() 안에서 일어난다.
 
-    세션 행을 select_for_update 로 잠가 같은 세션의 턴이 겹쳐 들어와도 직렬화된다
-    (겹치면 뒤에 온 요청이 앞의 것이 끝날 때까지 기다린다).
+    LLM 호출은 트랜잭션 밖에서 한다. 턴 겹침은 저장 시점의 낙관적 검사로 막는다
+    (_open_turn / _commit_turn 참고) - SSE 경로와 같은 방식이다.
     """
     body = parse_json_body(request)
     if body is None:
@@ -339,29 +368,22 @@ def submit_turn(request, session_id):
 
     anon_client_id = ensure_anon_client_id(request.session)
 
-    with transaction.atomic():
-        session = (
-            Session.objects.select_for_update()
-            .filter(pk=session_id, anon_client_id=anon_client_id)
-            .first()
+    context, failure = _open_turn(session_id, anon_client_id)
+    if failure is not None:
+        return failure
+    scenario, state, loaded_turn = context
+
+    masked_text, detected_pii = mask_pii(text)
+
+    # 트랜잭션 밖 - 여기가 4~20초 걸린다.
+    outcome = step(Engine(scenario=scenario, state=state), masked_text)
+
+    try:
+        _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome)
+    except ConcurrentTurnError:
+        return error_response(
+            "TURN_CONFLICT", "이전 턴이 아직 처리 중입니다.", 409
         )
-        # 남의 익명 쿠키로 접근하면 존재 여부도 알려주지 않는다 (403 이 아니라 404).
-        if session is None:
-            return error_response("SESSION_NOT_FOUND", "훈련을 찾을 수 없습니다.", 404)
-        if session.status != "active":
-            return error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
-
-        masked_text, detected_pii = mask_pii(text)
-
-        scenario = load_scenario(session.scenario_id)
-        state = load_state(session)
-        outcome = step(Engine(scenario=scenario, state=state), masked_text)
-        save_state(session, state)
-
-        if outcome.ended:
-            session.status = "ended"
-            session.ended_at = timezone.now()
-            session.save(update_fields=["status", "ended_at"])
 
     return json_response(
         {
@@ -476,6 +498,10 @@ def turn_stream(request, session_id):
 
     ⚠️ 생성기가 도는 동안에는 DB 트랜잭션을 열어두지 않는다. 대신 저장 시점에 불러온
     턴 번호가 그대로인지 확인해서(낙관적 잠금) 턴이 겹치면 저장을 포기한다.
+
+    ⚠️ _turn_events 는 반드시 async 생성기여야 한다. 동기 생성기를 넘기면 ASGI 경로가
+    이벤트 루프를 막으며 소진해서, 문장이 하나씩 나가지 않고 턴이 끝난 뒤 한꺼번에
+    도착한다 - 스트리밍의 이점이 통째로 사라진다.
     """
     body = parse_json_body(request)
     if body is None:
@@ -491,19 +517,10 @@ def turn_stream(request, session_id):
 
     anon_client_id = ensure_anon_client_id(request.session)
 
-    with transaction.atomic():
-        session = (
-            Session.objects.select_for_update()
-            .filter(pk=session_id, anon_client_id=anon_client_id)
-            .first()
-        )
-        if session is None:
-            return error_response("SESSION_NOT_FOUND", "훈련을 찾을 수 없습니다.", 404)
-        if session.status != "active":
-            return error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
-        scenario = load_scenario(session.scenario_id)
-        state = load_state(session)
-        loaded_turn = session.turn
+    context, failure = _open_turn(session_id, anon_client_id)
+    if failure is not None:
+        return failure
+    scenario, state, loaded_turn = context
 
     masked_text, detected_pii = mask_pii(text)
 
@@ -520,7 +537,7 @@ def turn_stream(request, session_id):
     return response
 
 
-def _turn_events(
+async def _turn_events(
     session_id, anon_client_id, scenario, state, loaded_turn, masked_text, detected_pii
 ):
     yield _sse("accepted", {"turnNo": loaded_turn + 1})
@@ -530,31 +547,36 @@ def _turn_events(
     for warning in pii_warnings:
         yield _sse("riskWarning", warning)
 
-    deltas = queue.Queue()
+    # step() 은 동기 함수라 스레드에서 돌리고, 결과 문장은 이벤트 루프로 넘겨받는다.
+    loop = asyncio.get_running_loop()
+    deltas = asyncio.Queue()
     box = {}
+
+    def hand_off(sentence):
+        loop.call_soon_threadsafe(deltas.put_nowait, sentence)
 
     def run_turn():
         try:
             box["outcome"] = step(
-                Engine(scenario=scenario, state=state), masked_text, on_delta=deltas.put
+                Engine(scenario=scenario, state=state), masked_text, on_delta=hand_off
             )
         except Exception as exc:  # 모델 오류·타임아웃 등
             box["error"] = exc
         finally:
             # 이 스레드가 DB 를 쓸 일은 없지만, 썼다면 커넥션을 여기서 반납한다.
             connections.close_all()
-            deltas.put(_STREAM_END)
+            loop.call_soon_threadsafe(deltas.put_nowait, _STREAM_END)
 
     worker = threading.Thread(target=run_turn, daemon=True)
     worker.start()
 
     while True:
-        item = deltas.get()
+        item = await deltas.get()
         if item is _STREAM_END:
             break
         # 안전 필터를 통과한 문장만 여기 도착한다 (StreamingSafetyGate).
         yield _sse("delta", {"text": item})
-    worker.join()
+    await asyncio.to_thread(worker.join)
 
     if "error" in box:
         yield _sse("error", {"code": "AI_ERROR", "message": "응답 생성에 실패했습니다."})
@@ -571,7 +593,9 @@ def _turn_events(
             yield _sse("riskWarning", warning)
 
     try:
-        _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome)
+        await sync_to_async(_commit_turn)(
+            session_id, anon_client_id, loaded_turn, state, outcome
+        )
     except ConcurrentTurnError:
         yield _sse(
             "error", {"code": "TURN_CONFLICT", "message": "이전 턴이 아직 처리 중입니다."}

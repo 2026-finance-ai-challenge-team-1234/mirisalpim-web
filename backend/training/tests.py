@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 from pathlib import Path
@@ -17,7 +18,7 @@ from ai_core.state import (
 )
 from django.conf import settings
 from django.core.management import call_command
-from django.test import Client, TestCase
+from django.test import Client, TestCase, TransactionTestCase
 
 from .engine_state import load_state, save_state
 from .grading import first_detectable_turn, grade
@@ -1037,6 +1038,23 @@ def fake_streaming_step(engine, user_text, on_delta=None, risky_actions=(), **kw
     )
 
 
+def drain(response):
+    """스트리밍 본문을 문자열로 모은다.
+
+    뷰가 async 생성기를 넘기므로(ASGI 에서 실제로 문장 단위 전송이 되려면 필수)
+    streaming_content 는 async 이터레이터다. 동기 테스트에서 읽으려면 루프를 돌려야 한다.
+
+    생성기 안의 sync_to_async(_commit_turn) 는 별도 스레드·별도 커넥션에서 돈다.
+    그래서 이 테스트들은 TransactionTestCase 여야 한다 - TestCase 의 롤백 트랜잭션은
+    커밋되지 않아 그 커넥션에서 세션이 아예 보이지 않는다.
+    """
+    if response.is_async:
+        async def collect():
+            return b"".join([chunk async for chunk in response.streaming_content])
+        return asyncio.run(collect()).decode("utf-8")
+    return b"".join(response.streaming_content).decode("utf-8")
+
+
 def parse_sse(body):
     """SSE 본문을 [(event, data), ...] 로 푼다."""
     events = []
@@ -1053,11 +1071,15 @@ def parse_sse(body):
     return events
 
 
-class TurnStreamTests(TestCase):
-    """Step 9b. SSE 턴 처리."""
+class TurnStreamTests(TransactionTestCase):
+    """Step 9b. SSE 턴 처리.
 
-    @classmethod
-    def setUpTestData(cls):
+    TestCase 가 아니라 TransactionTestCase 다. 뷰가 async 생성기를 쓰고 그 안의
+    저장이 별도 스레드에서 일어나므로, 롤백 트랜잭션 안에 갇힌 데이터는 그 스레드에
+    보이지 않는다. 대신 매 테스트마다 시드를 다시 넣는다.
+    """
+
+    def setUp(self):
         call_command("seed_scenarios", verbosity=0)
 
     def start_training(self):
@@ -1081,7 +1103,7 @@ class TurnStreamTests(TestCase):
                 data={"text": text},
                 content_type="application/json",
             )
-            body = b"".join(response.streaming_content).decode("utf-8")
+            body = drain(response)
         return response, parse_sse(body)
 
     def test_streams_sentences_then_done(self):
@@ -1173,7 +1195,7 @@ class TurnStreamTests(TestCase):
                 data={"text": "안녕"},
                 content_type="application/json",
             )
-            events = parse_sse(b"".join(response.streaming_content).decode("utf-8"))
+            events = parse_sse(drain(response))
 
         self.assertEqual(events[-1][0], "error")
         self.assertEqual(events[-1][1]["code"], "AI_ERROR")
