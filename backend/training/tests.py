@@ -1,6 +1,6 @@
 import asyncio
 import json
-import time
+import threading
 import tempfile
 from pathlib import Path
 from unittest import skipUnless
@@ -1520,19 +1520,34 @@ class TurnTimeoutTests(TestCase):
         )
         return self.client.post("/api/v1/training-sessions").json()["sessionId"]
 
-    def test_slow_model_becomes_a_timeout(self):
-        session_id = self.start_training()
+    def slow_step(self):
+        """제한 시간을 넘기는 가짜 step().
+
+        sleep 으로 시간을 때우지 않고 Event 를 기다린다. 뷰가 스레드를 daemon 으로
+        두고 떠나므로, sleep 을 쓰면 그 스레드가 다음 테스트까지 살아남아
+        TransactionTestCase 의 테이블 정리와 겹칠 수 있다.
+        """
+        release = threading.Event()
+        self.addCleanup(release.set)
 
         def never_returns(engine, user_text, **kwargs):
-            time.sleep(5)
+            release.wait(30)
 
+        return never_returns
+
+    def timed_out_turn(self, session_id):
         with patch("training.views.TURN_TIMEOUT_SECONDS", 0.2):
-            with patch("training.views.step", side_effect=never_returns):
-                response = self.client.post(
+            with patch("training.views.step", side_effect=self.slow_step()):
+                return self.client.post(
                     f"/api/v1/training-sessions/{session_id}/turns",
                     data={"text": "안녕하세요"},
                     content_type="application/json",
                 )
+
+    def test_slow_model_becomes_a_timeout(self):
+        session_id = self.start_training()
+
+        response = self.timed_out_turn(session_id)
 
         self.assertEqual(response.status_code, 504)
         self.assertEqual(response.json()["error"]["code"], "AI_TIMEOUT")
@@ -1540,16 +1555,7 @@ class TurnTimeoutTests(TestCase):
     def test_timeout_does_not_advance_the_session(self):
         session_id = self.start_training()
 
-        def never_returns(engine, user_text, **kwargs):
-            time.sleep(5)
-
-        with patch("training.views.TURN_TIMEOUT_SECONDS", 0.2):
-            with patch("training.views.step", side_effect=never_returns):
-                self.client.post(
-                    f"/api/v1/training-sessions/{session_id}/turns",
-                    data={"text": "안녕하세요"},
-                    content_type="application/json",
-                )
+        self.timed_out_turn(session_id)
 
         session = Session.objects.get(pk=session_id)
         self.assertEqual(session.turn, 1)

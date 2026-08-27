@@ -699,7 +699,7 @@ async def _turn_events(
             yield _sse("riskWarning", warning)
 
     try:
-        await sync_to_async(_commit_turn)(
+        await sync_to_async(_commit_turn_in_worker)(
             session_id, anon_client_id, loaded_turn, state, outcome
         )
     except ConcurrentTurnError:
@@ -717,6 +717,22 @@ async def _turn_events(
             "endReason": outcome.end_reason,
         },
     )
+
+
+def _commit_turn_in_worker(session_id, anon_client_id, loaded_turn, state, outcome):
+    """SSE 경로 전용 래퍼 - 커넥션까지 반납한다.
+
+    sync_to_async 는 Django 요청 수명주기 밖의 스레드에서 돈다. 거기서 연 커넥션은
+    요청이 끝나도 아무도 닫아주지 않아 프로세스가 살아 있는 동안 남는다
+    (테스트에서는 그 커넥션이 DROP DATABASE 를 막아 teardown 이 실패한다).
+
+    Django 기본값이 CONN_MAX_AGE=0 이라 매 요청 끝에 커넥션을 닫으므로,
+    여기서 닫는 것도 같은 동작이다.
+    """
+    try:
+        _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome)
+    finally:
+        connections.close_all()
 
 
 def _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome):
