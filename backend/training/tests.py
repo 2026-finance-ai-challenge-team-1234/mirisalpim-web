@@ -1,4 +1,6 @@
+import asyncio
 import json
+import threading
 import tempfile
 from pathlib import Path
 from unittest import skipUnless
@@ -16,12 +18,14 @@ from ai_core.state import (
     try_advance_stage,
 )
 from django.conf import settings
+from django.core.cache import cache
 from django.core.management import call_command
-from django.test import Client, TestCase
+from django.test import Client, TestCase, TransactionTestCase
 
 from .engine_state import load_state, save_state
 from .grading import first_detectable_turn, grade
 from .models import Scenario, Session, Stage, TellPoint
+from .throttle import TURN_RATE_LIMIT, TURN_RATE_WINDOW_SECONDS
 from .selection import SELECTION_KEY
 from .views import ANON_CLIENT_ID_KEY, ConcurrentTurnError, _commit_turn
 
@@ -875,11 +879,20 @@ class GradingTests(TestCase):
 
 
 class SubmitJudgmentTests(TestCase):
-    """Step 10. 판단 제출 = 종료 + 채점 + 진단 + 원문 파기."""
+    """Step 10. 판단 제출 = 종료 + 채점 + 진단 + 원문 파기.
+
+    진단 LLM 은 부르지 않는다(요금·지연). 규칙 기반 문장만으로도 리포트가
+    완성돼야 한다는 것이 이 테스트들이 지키는 계약이다.
+    """
 
     @classmethod
     def setUpTestData(cls):
         call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        patcher = patch("training.views.interpret", return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def start_training(self, track="T01-1"):
         self.client.get("/api/v1/bootstrap")
@@ -914,8 +927,8 @@ class SubmitJudgmentTests(TestCase):
         self.assertEqual(
             set(payload),
             {"grade", "isCorrect", "judgedTurn", "firstDetectableTurn", "summary",
-             "strength", "weakness", "missedTellPoints", "riskyActions",
-             "guidance", "timeline"},
+             "vulnerabilityPattern", "strength", "weakness", "missedTellPoints",
+             "riskyActions", "guidance", "timeline"},
         )
         self.assertTrue(payload["summary"])
         self.assertTrue(payload["guidance"])
@@ -1037,6 +1050,23 @@ def fake_streaming_step(engine, user_text, on_delta=None, risky_actions=(), **kw
     )
 
 
+def drain(response):
+    """스트리밍 본문을 문자열로 모은다.
+
+    뷰가 async 생성기를 넘기므로(ASGI 에서 실제로 문장 단위 전송이 되려면 필수)
+    streaming_content 는 async 이터레이터다. 동기 테스트에서 읽으려면 루프를 돌려야 한다.
+
+    생성기 안의 sync_to_async(_commit_turn) 는 별도 스레드·별도 커넥션에서 돈다.
+    그래서 이 테스트들은 TransactionTestCase 여야 한다 - TestCase 의 롤백 트랜잭션은
+    커밋되지 않아 그 커넥션에서 세션이 아예 보이지 않는다.
+    """
+    if response.is_async:
+        async def collect():
+            return b"".join([chunk async for chunk in response.streaming_content])
+        return asyncio.run(collect()).decode("utf-8")
+    return b"".join(response.streaming_content).decode("utf-8")
+
+
 def parse_sse(body):
     """SSE 본문을 [(event, data), ...] 로 푼다."""
     events = []
@@ -1053,11 +1083,15 @@ def parse_sse(body):
     return events
 
 
-class TurnStreamTests(TestCase):
-    """Step 9b. SSE 턴 처리."""
+class TurnStreamTests(TransactionTestCase):
+    """Step 9b. SSE 턴 처리.
 
-    @classmethod
-    def setUpTestData(cls):
+    TestCase 가 아니라 TransactionTestCase 다. 뷰가 async 생성기를 쓰고 그 안의
+    저장이 별도 스레드에서 일어나므로, 롤백 트랜잭션 안에 갇힌 데이터는 그 스레드에
+    보이지 않는다. 대신 매 테스트마다 시드를 다시 넣는다.
+    """
+
+    def setUp(self):
         call_command("seed_scenarios", verbosity=0)
 
     def start_training(self):
@@ -1081,7 +1115,7 @@ class TurnStreamTests(TestCase):
                 data={"text": text},
                 content_type="application/json",
             )
-            body = b"".join(response.streaming_content).decode("utf-8")
+            body = drain(response)
         return response, parse_sse(body)
 
     def test_streams_sentences_then_done(self):
@@ -1173,7 +1207,7 @@ class TurnStreamTests(TestCase):
                 data={"text": "안녕"},
                 content_type="application/json",
             )
-            events = parse_sse(b"".join(response.streaming_content).decode("utf-8"))
+            events = parse_sse(drain(response))
 
         self.assertEqual(events[-1][0], "error")
         self.assertEqual(events[-1][1]["code"], "AI_ERROR")
@@ -1358,3 +1392,272 @@ class ApiErrorContractTests(TestCase):
         response = self.client.get("/report")
 
         self.assertEqual(response.status_code, 200)
+
+
+class TurnThrottleTests(TestCase):
+    """API 설계 9절 - 레이트 리밋, 4-6 - Idempotency-Key."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+
+    def start_training(self):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        return self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+    def turn(self, session_id, text="안녕하세요", headers=None):
+        with patch(
+            "training.views.step",
+            side_effect=lambda e, t, **kw: fake_step(e, t),
+        ):
+            return self.client.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data={"text": text},
+                content_type="application/json",
+                headers=headers or {},
+            )
+
+    def test_allows_requests_under_the_limit(self):
+        """한도 안에서는 429 가 나오지 않는다.
+
+        200 을 기대하지 않는 이유: fake_step 이 턴을 2씩 올려서 20회를 돌리면
+        중간에 max_turns 에 닿아 SESSION_ENDED(409)가 난다. 여기서 확인할 것은
+        레이트 리밋이 걸리지 않는다는 것뿐이다.
+        """
+        session_id = self.start_training()
+
+        codes = [self.turn(session_id).status_code for _ in range(TURN_RATE_LIMIT)]
+
+        self.assertNotIn(429, codes)
+
+    def test_rejects_requests_over_the_limit(self):
+        session_id = self.start_training()
+        for _ in range(TURN_RATE_LIMIT):
+            self.turn(session_id)
+
+        response = self.turn(session_id)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json()["error"]["code"], "RATE_LIMITED")
+
+    def test_rate_limit_tells_the_client_when_to_retry(self):
+        session_id = self.start_training()
+        for _ in range(TURN_RATE_LIMIT):
+            self.turn(session_id)
+
+        response = self.turn(session_id)
+
+        self.assertEqual(response["Retry-After"], str(TURN_RATE_WINDOW_SECONDS))
+
+    def test_limit_is_per_anonymous_client(self):
+        """다른 사용자가 앞사람의 한도에 걸리면 안 된다."""
+        session_id = self.start_training()
+        for _ in range(TURN_RATE_LIMIT + 1):
+            self.turn(session_id)
+
+        other = Client()
+        other.get("/api/v1/bootstrap")
+        other.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+
+        self.assertEqual(other.post("/api/v1/training-sessions").status_code, 201)
+
+    def test_retry_with_same_idempotency_key_does_not_advance_the_turn(self):
+        session_id = self.start_training()
+        headers = {"Idempotency-Key": "abc-123"}
+
+        first = self.turn(session_id, headers=headers).json()
+        second = self.turn(session_id, headers=headers).json()
+
+        self.assertEqual(first, second)
+        # opening + user + scammer. 두 번째 요청이 턴을 진행시켰다면 5건이 된다.
+        self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 3)
+
+    def test_different_idempotency_key_advances_the_turn(self):
+        session_id = self.start_training()
+
+        self.turn(session_id, headers={"Idempotency-Key": "key-1"})
+        self.turn(session_id, headers={"Idempotency-Key": "key-2"})
+
+        self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 5)
+
+    def test_without_the_header_each_request_is_a_new_turn(self):
+        session_id = self.start_training()
+
+        self.turn(session_id)
+        self.turn(session_id)
+
+        self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 5)
+
+
+class TurnTimeoutTests(TestCase):
+    """API 설계 9절 - 턴 처리 제한 시간."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+
+    def start_training(self):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        return self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+    def slow_step(self):
+        """제한 시간을 넘기는 가짜 step().
+
+        sleep 으로 시간을 때우지 않고 Event 를 기다린다. 뷰가 스레드를 daemon 으로
+        두고 떠나므로, sleep 을 쓰면 그 스레드가 다음 테스트까지 살아남아
+        TransactionTestCase 의 테이블 정리와 겹칠 수 있다.
+        """
+        release = threading.Event()
+        self.addCleanup(release.set)
+
+        def never_returns(engine, user_text, **kwargs):
+            release.wait(30)
+
+        return never_returns
+
+    def timed_out_turn(self, session_id):
+        with patch("training.views.TURN_TIMEOUT_SECONDS", 0.2):
+            with patch("training.views.step", side_effect=self.slow_step()):
+                return self.client.post(
+                    f"/api/v1/training-sessions/{session_id}/turns",
+                    data={"text": "안녕하세요"},
+                    content_type="application/json",
+                )
+
+    def test_slow_model_becomes_a_timeout(self):
+        session_id = self.start_training()
+
+        response = self.timed_out_turn(session_id)
+
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(response.json()["error"]["code"], "AI_TIMEOUT")
+
+    def test_timeout_does_not_advance_the_session(self):
+        session_id = self.start_training()
+
+        self.timed_out_turn(session_id)
+
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.turn, 1)
+        self.assertEqual(session.turns.count(), 1)
+
+    def test_model_failure_becomes_a_502(self):
+        session_id = self.start_training()
+
+        with patch("training.views.step", side_effect=RuntimeError("모델 오류")):
+            response = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data={"text": "안녕하세요"},
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_ERROR")
+
+
+class DiagnosisLlmTests(TestCase):
+    """진단 LLM 은 해석만 하고, 실패하면 규칙 기반 문장이 그대로 남는다."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def start_and_judge(self, interpreted):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        session_id = self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+        with patch("training.views.interpret", return_value=interpreted):
+            response = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True},
+                content_type="application/json",
+            )
+        return session_id, response.json()
+
+    def test_llm_sentences_replace_the_rule_based_ones(self):
+        _, report = self.start_and_judge({
+            "summary": "앱 설치 요구 단계에서 의심하고 중단하셨습니다.",
+            "vulnerabilityPattern": "긴급성 압박에 반응하는 경향",
+            "strength": "설치 요구가 나오자 절차를 멈추셨습니다.",
+            "weakness": "첫 통화에서 기관명을 그대로 믿으셨습니다.",
+        })
+
+        self.assertEqual(report["summary"], "앱 설치 요구 단계에서 의심하고 중단하셨습니다.")
+        self.assertEqual(report["vulnerabilityPattern"], "긴급성 압박에 반응하는 경향")
+
+    def test_llm_never_overrides_the_grade_or_missed_clues(self):
+        """등급·놓친 단서·행동 가이드는 코드가 정한다 (리포트 문서 §4).
+
+        몇 턴 진행한 뒤 판단해야 놓친 단서가 쌓인다. 시작 직후 판단하면
+        (즉시 간파) 놓친 단서가 없는 것이 정상이다.
+        """
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        session_id = self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+        for _ in range(4):
+            with patch("training.views.step", side_effect=lambda e, t, **kw: fake_step(e, t)):
+                self.client.post(
+                    f"/api/v1/training-sessions/{session_id}/turns",
+                    data={"text": "네 알겠습니다"},
+                    content_type="application/json",
+                )
+
+        with patch("training.views.interpret", return_value={
+            "summary": "s", "vulnerabilityPattern": "v",
+            "strength": "st", "weakness": "w",
+        }):
+            report = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True},
+                content_type="application/json",
+            ).json()
+
+        self.assertIn(report["grade"], {"S", "A", "B", "C", "D", "오탐"})
+        self.assertTrue(report["missedTellPoints"])
+        self.assertTrue(report["guidance"])
+
+    def test_falls_back_to_rule_based_when_the_model_fails(self):
+        _, report = self.start_and_judge(None)
+
+        self.assertTrue(report["summary"])
+        self.assertTrue(report["strength"])
+        self.assertEqual(report["vulnerabilityPattern"], "")
+
+    def test_pattern_is_persisted_within_the_column_limit(self):
+        session_id, _ = self.start_and_judge({
+            "summary": "s", "vulnerabilityPattern": "가" * 60,
+            "strength": "st", "weakness": "w",
+        })
+
+        stored = Session.objects.get(pk=session_id).diagnosis.vulnerability_type
+        self.assertEqual(len(stored), 30)

@@ -1,18 +1,21 @@
+import asyncio
 import json
-import queue
 import random
 import threading
 import uuid
 
 from ai_core.engine import Engine, load_scenario, start_session, step
+from ai_core.llm import ConfigError
+from asgiref.sync import sync_to_async
 from ai_core.types import UserJudgment as EngineJudgment
-from django.db import connections, transaction
+from django.db import IntegrityError, connections, transaction
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from .diagnosis import build_report
+from .diagnosis_llm import interpret
 from .engine_state import load_state, save_state
 from .grading import grade
 from .http import error_response, json_response, parse_json_body
@@ -20,6 +23,12 @@ from .models import DiagnosisReport, Scenario, Session, UserJudgment
 from .pii import mask_pii
 from .recommendation import recommend
 from .selection import get_selection, store_selection
+from .throttle import (
+    idempotency_cache_key,
+    remember_turn,
+    remembered_turn,
+    turn_rate_exceeded,
+)
 from .tracks import TAXONOMY
 
 #: 익명 식별자를 담는 세션 키로 원본 쿠키 값이 아니라 서버가 만든 파생 식별자를 넣음
@@ -28,6 +37,9 @@ ANON_CLIENT_ID_KEY = "anon_client_id"
 
 #: 사용자 입력 길이 상한
 MAX_INPUT_CHARS = 200
+
+#: 한 턴 처리 제한 시간 (API 설계 9절). 넘으면 AI_TIMEOUT.
+TURN_TIMEOUT_SECONDS = 60
 
 
 def ensure_anon_client_id(session):
@@ -314,31 +326,84 @@ def _risk_warnings(kinds):
     return warnings
 
 
-@require_POST
-def submit_turn(request, session_id):
-    """P-05-02. 훈련생 발화 1턴을 처리하고 사기범의 다음 발화를 돌려준다.
+def _check_turn_request(request, session_id):
+    """두 턴 경로가 공유하는 앞단 검사.
 
-    처리 순서는 API 설계 4-6 을 따른다:
-      입력 검증 → PII 마스킹 → 판정기 → 코드 상태 승인 → 사기범 생성 → 안전 필터
-    뒤의 네 단계는 ai_core.step() 안에서 일어난다.
-
-    세션 행을 select_for_update 로 잠가 같은 세션의 턴이 겹쳐 들어와도 직렬화된다
-    (겹치면 뒤에 온 요청이 앞의 것이 끝날 때까지 기다린다).
+    반환: (본문 텍스트, 익명 ID, 오류응답). 오류가 있으면 앞의 둘은 None 이다.
     """
     body = parse_json_body(request)
     if body is None:
-        return error_response("INVALID_BODY", "요청 형식이 올바르지 않습니다.", 400)
+        return None, None, error_response(
+            "INVALID_BODY", "요청 형식이 올바르지 않습니다.", 400
+        )
 
     text = (body.get("text") or "").strip()
     if not text:
-        return error_response("EMPTY_INPUT", "입력이 비어 있습니다.", 400)
+        return None, None, error_response("EMPTY_INPUT", "입력이 비어 있습니다.", 400)
     if len(text) > MAX_INPUT_CHARS:
-        return error_response(
+        return None, None, error_response(
             "INPUT_TOO_LARGE", f"{MAX_INPUT_CHARS}자 이내로 입력해 주세요.", 413
         )
 
     anon_client_id = ensure_anon_client_id(request.session)
 
+    retry_after = turn_rate_exceeded(anon_client_id)
+    if retry_after is not None:
+        return None, None, error_response(
+            "RATE_LIMITED",
+            "요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.",
+            429,
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    return text, anon_client_id, None
+
+
+def _run_step(scenario, state, masked_text):
+    """step() 을 시간 제한과 함께 돌린다.
+
+    step() 은 LLM 을 세 번 부르고 취소할 방법이 없다. 제한 시간이 지나면 스레드는
+    그대로 두고(daemon) 요청만 끝낸다 - 상태를 저장하지 않으므로 세션은 그대로다.
+
+    반환: (결과, 오류코드). 둘 중 하나만 값이 있다.
+
+    ConfigError 는 삼키지 않고 그대로 올린다. 모델 호출 실패(502)와 달리 우리
+    설정이 잘못된 것이라 운영자가 고쳐야 하고, 500 으로 드러나야 눈에 띈다.
+    """
+    box = {}
+
+    def run():
+        try:
+            box["outcome"] = step(Engine(scenario=scenario, state=state), masked_text)
+        except Exception as exc:  # 모델 오류·설정 오류 등
+            box["error"] = exc
+        finally:
+            connections.close_all()
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(TURN_TIMEOUT_SECONDS)
+
+    if worker.is_alive():
+        return None, "AI_TIMEOUT"
+    if "error" in box:
+        if isinstance(box["error"], ConfigError):
+            raise box["error"]
+        return None, "AI_ERROR"
+    return box["outcome"], None
+
+
+def _open_turn(session_id, anon_client_id):
+    """턴 시작에 필요한 것만 짧은 트랜잭션에서 읽는다.
+
+    ⚠️ LLM 호출은 반드시 이 트랜잭션 밖에서 한다. 예전 구현은 step() 을 통째로
+    atomic + select_for_update 안에 두어서, 턴당 4~20초 동안 DB 커넥션과 행 잠금을
+    붙들고 있었다. 동시 사용자가 몇 명만 돼도 커넥션 풀이 마른다.
+
+    잠금 대신 _commit_turn() 의 낙관적 검사(turn 번호 비교)로 턴 겹침을 막는다.
+
+    반환: (컨텍스트, 오류응답). 둘 중 하나만 값이 있다.
+    """
     with transaction.atomic():
         session = (
             Session.objects.select_for_update()
@@ -347,31 +412,68 @@ def submit_turn(request, session_id):
         )
         # 남의 익명 쿠키로 접근하면 존재 여부도 알려주지 않는다 (403 이 아니라 404).
         if session is None:
-            return error_response("SESSION_NOT_FOUND", "훈련을 찾을 수 없습니다.", 404)
+            return None, error_response(
+                "SESSION_NOT_FOUND", "훈련을 찾을 수 없습니다.", 404
+            )
         if session.status != "active":
-            return error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
+            return None, error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
 
-        masked_text, detected_pii = mask_pii(text)
+        return (load_scenario(session.scenario_id), load_state(session), session.turn), None
 
-        scenario = load_scenario(session.scenario_id)
-        state = load_state(session)
-        outcome = step(Engine(scenario=scenario, state=state), masked_text)
-        save_state(session, state)
 
-        if outcome.ended:
-            session.status = "ended"
-            session.ended_at = timezone.now()
-            session.save(update_fields=["status", "ended_at"])
+@require_POST
+def submit_turn(request, session_id):
+    """P-05-02. 훈련생 발화 1턴을 처리하고 사기범의 다음 발화를 돌려준다.
 
-    return json_response(
-        {
-            "turnNo": state.turn,
-            "scammerText": outcome.scammer_text,
-            "riskWarnings": _risk_warnings(detected_pii + outcome.risky_actions),
-            "ended": outcome.ended,
-            "endReason": outcome.end_reason,
-        }
-    )
+    처리 순서는 API 설계 4-6 을 따른다:
+      입력 검증 → PII 마스킹 → 판정기 → 코드 상태 승인 → 사기범 생성 → 안전 필터
+    뒤의 네 단계는 ai_core.step() 안에서 일어난다.
+
+    LLM 호출은 트랜잭션 밖에서 한다. 턴 겹침은 저장 시점의 낙관적 검사로 막는다
+    (_open_turn / _commit_turn 참고) - SSE 경로와 같은 방식이다.
+    """
+    text, anon_client_id, failure = _check_turn_request(request, session_id)
+    if failure is not None:
+        return failure
+
+    # 같은 Idempotency-Key 로 다시 왔다면 턴을 또 진행하지 않고 첫 응답을 돌려준다.
+    idem_key = idempotency_cache_key(request, session_id)
+    replayed = remembered_turn(idem_key)
+    if replayed is not None:
+        return json_response(replayed)
+
+    context, failure = _open_turn(session_id, anon_client_id)
+    if failure is not None:
+        return failure
+    scenario, state, loaded_turn = context
+
+    masked_text, detected_pii = mask_pii(text)
+
+    # 트랜잭션 밖 - 여기가 4~20초 걸린다.
+    outcome, error_code = _run_step(scenario, state, masked_text)
+    if error_code == "AI_TIMEOUT":
+        return error_response(
+            "AI_TIMEOUT", "응답이 지연되고 있습니다. 다시 시도해 주세요.", 504
+        )
+    if error_code is not None:
+        return error_response("AI_ERROR", "응답 생성에 실패했습니다.", 502)
+
+    try:
+        _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome)
+    except ConcurrentTurnError:
+        return error_response(
+            "TURN_CONFLICT", "이전 턴이 아직 처리 중입니다.", 409
+        )
+
+    payload = {
+        "turnNo": state.turn,
+        "scammerText": outcome.scammer_text,
+        "riskWarnings": _risk_warnings(detected_pii + outcome.risky_actions),
+        "ended": outcome.ended,
+        "endReason": outcome.end_reason,
+    }
+    remember_turn(idem_key, payload)
+    return json_response(payload)
 
 
 @require_POST
@@ -383,6 +485,9 @@ def submit_judgment(request, session_id):
     (화면이 종료 시점에 자동으로 물어본다).
 
     응답 후 대화 원문을 지운다 - 리포트에 필요한 값은 이미 스냅샷으로 옮겼다.
+
+    진단 LLM 호출은 트랜잭션 밖에서 한다. 턴 처리와 같은 이유로, 수십 초 걸리는
+    모델 호출을 트랜잭션 + 행 잠금 안에 두면 커넥션이 그동안 묶인다.
     """
     body = parse_json_body(request)
     if body is None:
@@ -409,12 +514,31 @@ def submit_judgment(request, session_id):
 
         scenario = load_scenario(session.scenario_id)
         state = load_state(session)
-        state.user_judgment = EngineJudgment(
-            turn=state.turn, is_scam_guess=is_scam_guess
-        )
 
-        result = grade(scenario, state)
-        report = build_report(scenario, state, result)
+    state.user_judgment = EngineJudgment(turn=state.turn, is_scam_guess=is_scam_guess)
+
+    # 등급·놓친 단서·행동 가이드는 코드가 정한다 (리포트 문서 §8).
+    result = grade(scenario, state)
+    report = build_report(scenario, state, result)
+
+    # 트랜잭션 밖 - 실패하거나 늦으면 규칙 기반 문장을 그대로 쓴다.
+    interpreted = interpret(scenario, state, result, report)
+    if interpreted:
+        report.update(interpreted)
+
+    try:
+        _finish_session(session_id, is_scam_guess, result, report)
+    except IntegrityError:
+        # 준비하는 사이에 다른 요청이 먼저 판단을 저장했다.
+        return error_response("ALREADY_JUDGED", "이미 판단을 제출했습니다.", 409)
+
+    return json_response(report)
+
+
+def _finish_session(session_id, is_scam_guess, result, report):
+    """채점 결과를 저장하고 세션을 닫는다. 원문은 여기서 지운다."""
+    with transaction.atomic():
+        session = Session.objects.select_for_update().get(pk=session_id)
 
         UserJudgment.objects.create(
             session=session,
@@ -424,7 +548,9 @@ def submit_judgment(request, session_id):
         )
         DiagnosisReport.objects.create(
             session=session,
-            vulnerability_type="",  # 취약 패턴 분류 확정 전까지 비워둔다
+            # 분류 체계(Cialdini 5유형 고정 여부)가 미확정이라 LLM 이 준 짧은 구를
+            # 그대로 넣는다. 고정 목록으로 정해지면 매핑을 추가해야 한다.
+            vulnerability_type=report["vulnerabilityPattern"][:30],
             missed_tell_points=report["missedTellPoints"],
             guidance_text="\n".join(report["guidance"]),
             summary=report["summary"],
@@ -437,8 +563,6 @@ def submit_judgment(request, session_id):
         session.save(update_fields=["status", "ended_at"])
 
         _discard_transcript(session)
-
-    return json_response(report)
 
 
 def _discard_transcript(session):
@@ -476,34 +600,19 @@ def turn_stream(request, session_id):
 
     ⚠️ 생성기가 도는 동안에는 DB 트랜잭션을 열어두지 않는다. 대신 저장 시점에 불러온
     턴 번호가 그대로인지 확인해서(낙관적 잠금) 턴이 겹치면 저장을 포기한다.
+
+    ⚠️ _turn_events 는 반드시 async 생성기여야 한다. 동기 생성기를 넘기면 ASGI 경로가
+    이벤트 루프를 막으며 소진해서, 문장이 하나씩 나가지 않고 턴이 끝난 뒤 한꺼번에
+    도착한다 - 스트리밍의 이점이 통째로 사라진다.
     """
-    body = parse_json_body(request)
-    if body is None:
-        return error_response("INVALID_BODY", "요청 형식이 올바르지 않습니다.", 400)
+    text, anon_client_id, failure = _check_turn_request(request, session_id)
+    if failure is not None:
+        return failure
 
-    text = (body.get("text") or "").strip()
-    if not text:
-        return error_response("EMPTY_INPUT", "입력이 비어 있습니다.", 400)
-    if len(text) > MAX_INPUT_CHARS:
-        return error_response(
-            "INPUT_TOO_LARGE", f"{MAX_INPUT_CHARS}자 이내로 입력해 주세요.", 413
-        )
-
-    anon_client_id = ensure_anon_client_id(request.session)
-
-    with transaction.atomic():
-        session = (
-            Session.objects.select_for_update()
-            .filter(pk=session_id, anon_client_id=anon_client_id)
-            .first()
-        )
-        if session is None:
-            return error_response("SESSION_NOT_FOUND", "훈련을 찾을 수 없습니다.", 404)
-        if session.status != "active":
-            return error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
-        scenario = load_scenario(session.scenario_id)
-        state = load_state(session)
-        loaded_turn = session.turn
+    context, failure = _open_turn(session_id, anon_client_id)
+    if failure is not None:
+        return failure
+    scenario, state, loaded_turn = context
 
     masked_text, detected_pii = mask_pii(text)
 
@@ -520,7 +629,7 @@ def turn_stream(request, session_id):
     return response
 
 
-def _turn_events(
+async def _turn_events(
     session_id, anon_client_id, scenario, state, loaded_turn, masked_text, detected_pii
 ):
     yield _sse("accepted", {"turnNo": loaded_turn + 1})
@@ -530,31 +639,50 @@ def _turn_events(
     for warning in pii_warnings:
         yield _sse("riskWarning", warning)
 
-    deltas = queue.Queue()
+    # 판정기가 먼저 끝나야 사기범 생성이 시작된다. 화면이 대기 상태를 표시할 수
+    # 있도록 지금 단계를 알린다 (API 설계 4-6 의 status 이벤트).
+    yield _sse("status", {"phase": "judging"})
+
+    # step() 은 동기 함수라 스레드에서 돌리고, 결과 문장은 이벤트 루프로 넘겨받는다.
+    loop = asyncio.get_running_loop()
+    deltas = asyncio.Queue()
     box = {}
+
+    def hand_off(sentence):
+        loop.call_soon_threadsafe(deltas.put_nowait, sentence)
 
     def run_turn():
         try:
             box["outcome"] = step(
-                Engine(scenario=scenario, state=state), masked_text, on_delta=deltas.put
+                Engine(scenario=scenario, state=state), masked_text, on_delta=hand_off
             )
         except Exception as exc:  # 모델 오류·타임아웃 등
             box["error"] = exc
         finally:
             # 이 스레드가 DB 를 쓸 일은 없지만, 썼다면 커넥션을 여기서 반납한다.
             connections.close_all()
-            deltas.put(_STREAM_END)
+            loop.call_soon_threadsafe(deltas.put_nowait, _STREAM_END)
 
     worker = threading.Thread(target=run_turn, daemon=True)
     worker.start()
 
+    deadline = loop.time() + TURN_TIMEOUT_SECONDS
     while True:
-        item = deltas.get()
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            yield _sse("error", {"code": "AI_TIMEOUT", "message": "응답이 지연되고 있습니다."})
+            return
+        try:
+            item = await asyncio.wait_for(deltas.get(), timeout=remaining)
+        except (asyncio.TimeoutError, TimeoutError):
+            # 워커는 daemon 이라 두고 끝낸다. 저장하지 않으므로 세션은 그대로다.
+            yield _sse("error", {"code": "AI_TIMEOUT", "message": "응답이 지연되고 있습니다."})
+            return
         if item is _STREAM_END:
             break
         # 안전 필터를 통과한 문장만 여기 도착한다 (StreamingSafetyGate).
         yield _sse("delta", {"text": item})
-    worker.join()
+    await asyncio.to_thread(worker.join)
 
     if "error" in box:
         yield _sse("error", {"code": "AI_ERROR", "message": "응답 생성에 실패했습니다."})
@@ -571,7 +699,9 @@ def _turn_events(
             yield _sse("riskWarning", warning)
 
     try:
-        _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome)
+        await sync_to_async(_commit_turn_in_worker)(
+            session_id, anon_client_id, loaded_turn, state, outcome
+        )
     except ConcurrentTurnError:
         yield _sse(
             "error", {"code": "TURN_CONFLICT", "message": "이전 턴이 아직 처리 중입니다."}
@@ -587,6 +717,22 @@ def _turn_events(
             "endReason": outcome.end_reason,
         },
     )
+
+
+def _commit_turn_in_worker(session_id, anon_client_id, loaded_turn, state, outcome):
+    """SSE 경로 전용 래퍼 - 커넥션까지 반납한다.
+
+    sync_to_async 는 Django 요청 수명주기 밖의 스레드에서 돈다. 거기서 연 커넥션은
+    요청이 끝나도 아무도 닫아주지 않아 프로세스가 살아 있는 동안 남는다
+    (테스트에서는 그 커넥션이 DROP DATABASE 를 막아 teardown 이 실패한다).
+
+    Django 기본값이 CONN_MAX_AGE=0 이라 매 요청 끝에 커넥션을 닫으므로,
+    여기서 닫는 것도 같은 동작이다.
+    """
+    try:
+        _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome)
+    finally:
+        connections.close_all()
 
 
 def _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome):

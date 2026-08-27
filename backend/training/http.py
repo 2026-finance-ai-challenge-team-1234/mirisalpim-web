@@ -13,7 +13,7 @@ def json_response(data, status=200):
     return response
 
 
-def error_response(code, message, status, details=None):
+def error_response(code, message, status, details=None, headers=None):
     """운영 환경에서 내부 예외, 프롬프트, 모델 응답 원문, DB 키를 담지 않음"""
     request_id = f"req_{uuid.uuid4().hex[:16]}"
 
@@ -36,7 +36,10 @@ def error_response(code, message, status, details=None):
             "requestId": request_id,
         }
     }
-    return json_response(payload, status=status)
+    response = json_response(payload, status=status)
+    for name, value in (headers or {}).items():
+        response[name] = value
+    return response
 
 
 def parse_json_body(request):

@@ -37,6 +37,9 @@ def build_report(scenario, state, result):
         "judgedTurn": result.judged_turn,
         "firstDetectableTurn": result.first_detectable_turn,
         "summary": _summary(scenario, result),
+        # 규칙 기반으로는 채우지 않는다. 진단 LLM 이 붙으면 그때 값이 들어간다
+        # (취약 패턴을 규칙으로 판정하면 근거 없는 단정이 된다).
+        "vulnerabilityPattern": "",
         "strength": _strength(state, result),
         "weakness": _weakness(missed, result),
         "missedTellPoints": missed,
