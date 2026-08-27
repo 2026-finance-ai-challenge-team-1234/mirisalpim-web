@@ -160,16 +160,6 @@ def user_info(request):
     return json_response({"category": category, "track": track})
 
 
-def _find_track(track):
-    """분류표에서 track 코드가 속한 (카테고리, 대분류, 소분류) 를 찾는다."""
-    for category, groups in TAXONOMY.items():
-        for group in groups:
-            for sub in group["subItems"]:
-                if sub["id"] == track:
-                    return category, group, sub
-    return None, None, None
-
-
 @require_POST
 def recommendations(request):
     """P-02. 문진 응답으로 훈련 1개를 추천하고 세션에 기록한다.
@@ -187,33 +177,15 @@ def recommendations(request):
             "SCENARIO_NOT_AVAILABLE", "훈련 가능한 시나리오가 없습니다.", 503
         )
 
-    category, group, sub = _find_track(result["track"])
-    if category is None:
-        # 매핑표가 분류표에 없는 코드를 가리키는 상태 - 데이터 정합성 문제다.
-        return error_response(
-            "SCENARIO_NOT_AVAILABLE", "훈련 가능한 시나리오가 없습니다.", 503
-        )
-
     store_selection(
         request.session,
-        category,
+        result["category"],
         result["track"],
         entry_path="recommended",
         difficulty=result["difficulty"],
     )
 
-    reasons = result["matched"] or ["평소 활동과 대응 습관을 기준으로 골랐습니다"]
-
-    return json_response(
-        {
-            "category": category,
-            "track": result["track"],
-            "title": f"{sub['name']} 대응 훈련",
-            "description": group["desc"],
-            "reasons": reasons,
-            "suitability": str(min(97, 78 + 7 * len(result["matched"]))),
-        }
-    )
+    return json_response(result)
 
 
 @require_POST

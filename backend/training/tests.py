@@ -267,19 +267,47 @@ class RecommendationTests(TestCase):
 
         self.assertEqual(
             set(payload),
-            {"category", "track", "title", "description", "reasons", "suitability"},
+            {"category", "categoryGroup", "track", "title", "description",
+             "difficulty", "reasons", "suitability"},
         )
-        self.assertEqual(payload["track"], "T01-1")
         self.assertEqual(payload["category"], "voice")
+        self.assertTrue(payload["reasons"])
+
+    def test_difficulty_comes_from_the_response_habit(self):
+        """Q4 대응 습관이 난이도를 정한다 (recommendation_engine.HABIT_DIFFICULTY)."""
+        payload = self.post(age="AGE_60", concerns=["CONCERN_01"], habit="HABIT_FOLLOW").json()
+
+        self.assertEqual(payload["difficulty"], "easy")
 
     def test_never_recommends_track_without_scenario(self):
-        """CONCERN_09 는 T06-2/T06-1 을 가리키지만 둘 다 시나리오가 없다."""
+        """엔진은 T06(원격제어) 을 가리키지만 그 트랙엔 시나리오가 없다.
+
+        엔진 원본은 적재 현황을 모른다. 어댑터가 훈련 가능한 것으로 좁힌다.
+        """
         payload = self.post(
             age="AGE_30", activities=["ACT_LOAN_INSURANCE"],
             concerns=["CONCERN_09"], habit="HABIT_HANGUP",
         ).json()
 
         self.assertIn(payload["track"], {"T01-1", "T05-1"})
+
+    def test_every_survey_yields_a_trainable_track(self):
+        """무작위 설문 200건 전부 훈련 가능한 트랙이어야 한다."""
+        import random as _random
+
+        from .recommendation_engine import (
+            ACTIVITY_CODES, AGE_CODES, CONCERN_CODES, HABIT_CODES,
+        )
+
+        _random.seed(11)
+        for _ in range(200):
+            payload = self.post(
+                age=_random.choice(AGE_CODES),
+                activities=_random.sample(ACTIVITY_CODES, _random.randint(0, 3)),
+                concerns=_random.sample(CONCERN_CODES, _random.randint(0, 3)),
+                habit=_random.choice(HABIT_CODES),
+            ).json()
+            self.assertIn(payload["track"], {"T01-1", "T05-1"})
 
     def test_stores_selection_as_recommended(self):
         self.post(age="AGE_60", concerns=["CONCERN_01"], habit="HABIT_LISTEN")
