@@ -879,11 +879,20 @@ class GradingTests(TestCase):
 
 
 class SubmitJudgmentTests(TestCase):
-    """Step 10. 판단 제출 = 종료 + 채점 + 진단 + 원문 파기."""
+    """Step 10. 판단 제출 = 종료 + 채점 + 진단 + 원문 파기.
+
+    진단 LLM 은 부르지 않는다(요금·지연). 규칙 기반 문장만으로도 리포트가
+    완성돼야 한다는 것이 이 테스트들이 지키는 계약이다.
+    """
 
     @classmethod
     def setUpTestData(cls):
         call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        patcher = patch("training.views.interpret", return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def start_training(self, track="T01-1"):
         self.client.get("/api/v1/bootstrap")
@@ -918,8 +927,8 @@ class SubmitJudgmentTests(TestCase):
         self.assertEqual(
             set(payload),
             {"grade", "isCorrect", "judgedTurn", "firstDetectableTurn", "summary",
-             "strength", "weakness", "missedTellPoints", "riskyActions",
-             "guidance", "timeline"},
+             "vulnerabilityPattern", "strength", "weakness", "missedTellPoints",
+             "riskyActions", "guidance", "timeline"},
         )
         self.assertTrue(payload["summary"])
         self.assertTrue(payload["guidance"])
@@ -1558,3 +1567,91 @@ class TurnTimeoutTests(TestCase):
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_ERROR")
+
+
+class DiagnosisLlmTests(TestCase):
+    """진단 LLM 은 해석만 하고, 실패하면 규칙 기반 문장이 그대로 남는다."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def start_and_judge(self, interpreted):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        session_id = self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+        with patch("training.views.interpret", return_value=interpreted):
+            response = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True},
+                content_type="application/json",
+            )
+        return session_id, response.json()
+
+    def test_llm_sentences_replace_the_rule_based_ones(self):
+        _, report = self.start_and_judge({
+            "summary": "앱 설치 요구 단계에서 의심하고 중단하셨습니다.",
+            "vulnerabilityPattern": "긴급성 압박에 반응하는 경향",
+            "strength": "설치 요구가 나오자 절차를 멈추셨습니다.",
+            "weakness": "첫 통화에서 기관명을 그대로 믿으셨습니다.",
+        })
+
+        self.assertEqual(report["summary"], "앱 설치 요구 단계에서 의심하고 중단하셨습니다.")
+        self.assertEqual(report["vulnerabilityPattern"], "긴급성 압박에 반응하는 경향")
+
+    def test_llm_never_overrides_the_grade_or_missed_clues(self):
+        """등급·놓친 단서·행동 가이드는 코드가 정한다 (리포트 문서 §4).
+
+        몇 턴 진행한 뒤 판단해야 놓친 단서가 쌓인다. 시작 직후 판단하면
+        (즉시 간파) 놓친 단서가 없는 것이 정상이다.
+        """
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        session_id = self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+        for _ in range(4):
+            with patch("training.views.step", side_effect=lambda e, t, **kw: fake_step(e, t)):
+                self.client.post(
+                    f"/api/v1/training-sessions/{session_id}/turns",
+                    data={"text": "네 알겠습니다"},
+                    content_type="application/json",
+                )
+
+        with patch("training.views.interpret", return_value={
+            "summary": "s", "vulnerabilityPattern": "v",
+            "strength": "st", "weakness": "w",
+        }):
+            report = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True},
+                content_type="application/json",
+            ).json()
+
+        self.assertIn(report["grade"], {"S", "A", "B", "C", "D", "오탐"})
+        self.assertTrue(report["missedTellPoints"])
+        self.assertTrue(report["guidance"])
+
+    def test_falls_back_to_rule_based_when_the_model_fails(self):
+        _, report = self.start_and_judge(None)
+
+        self.assertTrue(report["summary"])
+        self.assertTrue(report["strength"])
+        self.assertEqual(report["vulnerabilityPattern"], "")
+
+    def test_pattern_is_persisted_within_the_column_limit(self):
+        session_id, _ = self.start_and_judge({
+            "summary": "s", "vulnerabilityPattern": "가" * 60,
+            "strength": "st", "weakness": "w",
+        })
+
+        stored = Session.objects.get(pk=session_id).diagnosis.vulnerability_type
+        self.assertEqual(len(stored), 30)

@@ -8,13 +8,14 @@ from ai_core.engine import Engine, load_scenario, start_session, step
 from ai_core.llm import ConfigError
 from asgiref.sync import sync_to_async
 from ai_core.types import UserJudgment as EngineJudgment
-from django.db import connections, transaction
+from django.db import IntegrityError, connections, transaction
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from .diagnosis import build_report
+from .diagnosis_llm import interpret
 from .engine_state import load_state, save_state
 from .grading import grade
 from .http import error_response, json_response, parse_json_body
@@ -484,6 +485,9 @@ def submit_judgment(request, session_id):
     (화면이 종료 시점에 자동으로 물어본다).
 
     응답 후 대화 원문을 지운다 - 리포트에 필요한 값은 이미 스냅샷으로 옮겼다.
+
+    진단 LLM 호출은 트랜잭션 밖에서 한다. 턴 처리와 같은 이유로, 수십 초 걸리는
+    모델 호출을 트랜잭션 + 행 잠금 안에 두면 커넥션이 그동안 묶인다.
     """
     body = parse_json_body(request)
     if body is None:
@@ -510,12 +514,31 @@ def submit_judgment(request, session_id):
 
         scenario = load_scenario(session.scenario_id)
         state = load_state(session)
-        state.user_judgment = EngineJudgment(
-            turn=state.turn, is_scam_guess=is_scam_guess
-        )
 
-        result = grade(scenario, state)
-        report = build_report(scenario, state, result)
+    state.user_judgment = EngineJudgment(turn=state.turn, is_scam_guess=is_scam_guess)
+
+    # 등급·놓친 단서·행동 가이드는 코드가 정한다 (리포트 문서 §8).
+    result = grade(scenario, state)
+    report = build_report(scenario, state, result)
+
+    # 트랜잭션 밖 - 실패하거나 늦으면 규칙 기반 문장을 그대로 쓴다.
+    interpreted = interpret(scenario, state, result, report)
+    if interpreted:
+        report.update(interpreted)
+
+    try:
+        _finish_session(session_id, is_scam_guess, result, report)
+    except IntegrityError:
+        # 준비하는 사이에 다른 요청이 먼저 판단을 저장했다.
+        return error_response("ALREADY_JUDGED", "이미 판단을 제출했습니다.", 409)
+
+    return json_response(report)
+
+
+def _finish_session(session_id, is_scam_guess, result, report):
+    """채점 결과를 저장하고 세션을 닫는다. 원문은 여기서 지운다."""
+    with transaction.atomic():
+        session = Session.objects.select_for_update().get(pk=session_id)
 
         UserJudgment.objects.create(
             session=session,
@@ -525,7 +548,9 @@ def submit_judgment(request, session_id):
         )
         DiagnosisReport.objects.create(
             session=session,
-            vulnerability_type="",  # 취약 패턴 분류 확정 전까지 비워둔다
+            # 분류 체계(Cialdini 5유형 고정 여부)가 미확정이라 LLM 이 준 짧은 구를
+            # 그대로 넣는다. 고정 목록으로 정해지면 매핑을 추가해야 한다.
+            vulnerability_type=report["vulnerabilityPattern"][:30],
             missed_tell_points=report["missedTellPoints"],
             guidance_text="\n".join(report["guidance"]),
             summary=report["summary"],
@@ -538,8 +563,6 @@ def submit_judgment(request, session_id):
         session.save(update_fields=["status", "ended_at"])
 
         _discard_transcript(session)
-
-    return json_response(report)
 
 
 def _discard_transcript(session):
