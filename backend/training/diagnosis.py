@@ -10,14 +10,23 @@
    출력으로 덮어쓰면 된다. grade·missed_tell_points·guidance 는 덮어쓰지 않는다.
 """
 
-from .grading import FALSE_ALARM
+from .grading import ACTION_API_NAMES, FALSE_ALARM
 
 #: 놓친 단서 설명은 시나리오 카드의 why 를 그대로 쓴다 (리포트 문서 §5-④:
 #: "이 부분은 LLM 생성이 필요하지 않다").
 
 
-def build_report(scenario, state, result):
-    """등급 결과 → 화면에 그대로 쓸 수 있는 리포트 dict."""
+def build_report(scenario, state, result, source_refs=()):
+    """등급 결과 → 화면에 그대로 쓸 수 있는 리포트 dict.
+
+    source / sourceRefs 는 훈련 근거 자료 출처다. 모델 주석이 두 필드를 "결과
+    리포트에 표시할 출처명 / 공식 자료 링크"로 정의해 둔 그대로 쓴다.
+    source_review_status 는 내부 관리용이라 내보내지 않는다.
+
+    ⚠️ 판단 제출 응답에만 담는다. 정상 시나리오의 source 는 "훈련용 정상 비교
+    사례..." 처럼 is_scam 을 누설하는데, 이 시점에는 이미 정답이 공개된 뒤라
+    문제가 없다. 훈련 중 응답(training-sessions, turns)에는 절대 넣지 않는다.
+    """
     tell_points = {tp.id: tp for tp in scenario.tell_points}
     missed = [
         {
@@ -43,8 +52,12 @@ def build_report(scenario, state, result):
         "strength": _strength(state, result),
         "weakness": _weakness(missed, result),
         "missedTellPoints": missed,
-        "riskyActions": result.risky_actions,
+        "riskyActions": [
+            ACTION_API_NAMES.get(a, a) for a in result.risky_actions
+        ],
         "guidance": list(scenario.debrief_points),
+        "source": scenario.source,
+        "sourceRefs": _official_links(source_refs),
         "timeline": _timeline(state, tell_points, result),
     }
 
@@ -110,3 +123,13 @@ def _timeline(state, tell_points, result):
         {"turn": turn, "markers": markers}
         for turn, markers in sorted(by_turn.items())
     ]
+
+
+def _official_links(refs):
+    """공식 자료 링크만 통과시킨다.
+
+    시나리오 데이터가 잘못 들어와도 화면에 이상한 주소가 뜨지 않게 한 겹 거른다
+    (API 설계 6절이 응답에 실제 작동 URL 을 담는 것을 제한한다 - 여기 링크는
+    사기 흉내가 아니라 공식 예방 자료라 예외지만, 형태는 확인한다).
+    """
+    return [ref for ref in refs if isinstance(ref, str) and ref.startswith("https://")]

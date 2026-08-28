@@ -22,9 +22,10 @@ from django.core.cache import cache
 from django.core.management import call_command
 from django.test import Client, TestCase, TransactionTestCase
 
+from .diagnosis import _official_links
 from .engine_state import load_state, save_state
-from .grading import first_detectable_turn, grade
-from .models import Scenario, Session, Stage, TellPoint
+from .grading import ACTION_API_NAMES, first_detectable_turn, grade
+from .models import RiskyAction, Scenario, Session, Stage, TellPoint
 from .throttle import TURN_RATE_LIMIT, TURN_RATE_WINDOW_SECONDS
 from .selection import SELECTION_KEY
 from .views import ANON_CLIENT_ID_KEY, ConcurrentTurnError, _commit_turn
@@ -267,19 +268,47 @@ class RecommendationTests(TestCase):
 
         self.assertEqual(
             set(payload),
-            {"category", "track", "title", "description", "reasons", "suitability"},
+            {"category", "categoryGroup", "track", "title", "description",
+             "difficulty", "reasons", "suitability"},
         )
-        self.assertEqual(payload["track"], "T01-1")
         self.assertEqual(payload["category"], "voice")
+        self.assertTrue(payload["reasons"])
+
+    def test_difficulty_comes_from_the_response_habit(self):
+        """Q4 대응 습관이 난이도를 정한다 (recommendation_engine.HABIT_DIFFICULTY)."""
+        payload = self.post(age="AGE_60", concerns=["CONCERN_01"], habit="HABIT_FOLLOW").json()
+
+        self.assertEqual(payload["difficulty"], "easy")
 
     def test_never_recommends_track_without_scenario(self):
-        """CONCERN_09 는 T06-2/T06-1 을 가리키지만 둘 다 시나리오가 없다."""
+        """엔진은 T06(원격제어) 을 가리키지만 그 트랙엔 시나리오가 없다.
+
+        엔진 원본은 적재 현황을 모른다. 어댑터가 훈련 가능한 것으로 좁힌다.
+        """
         payload = self.post(
             age="AGE_30", activities=["ACT_LOAN_INSURANCE"],
             concerns=["CONCERN_09"], habit="HABIT_HANGUP",
         ).json()
 
         self.assertIn(payload["track"], {"T01-1", "T05-1"})
+
+    def test_every_survey_yields_a_trainable_track(self):
+        """무작위 설문 200건 전부 훈련 가능한 트랙이어야 한다."""
+        import random as _random
+
+        from .recommendation_engine import (
+            ACTIVITY_CODES, AGE_CODES, CONCERN_CODES, HABIT_CODES,
+        )
+
+        _random.seed(11)
+        for _ in range(200):
+            payload = self.post(
+                age=_random.choice(AGE_CODES),
+                activities=_random.sample(ACTIVITY_CODES, _random.randint(0, 3)),
+                concerns=_random.sample(CONCERN_CODES, _random.randint(0, 3)),
+                habit=_random.choice(HABIT_CODES),
+            ).json()
+            self.assertIn(payload["track"], {"T01-1", "T05-1"})
 
     def test_stores_selection_as_recommended(self):
         self.post(age="AGE_60", concerns=["CONCERN_01"], habit="HABIT_LISTEN")
@@ -928,7 +957,7 @@ class SubmitJudgmentTests(TestCase):
             set(payload),
             {"grade", "isCorrect", "judgedTurn", "firstDetectableTurn", "summary",
              "vulnerabilityPattern", "strength", "weakness", "missedTellPoints",
-             "riskyActions", "guidance", "timeline"},
+             "riskyActions", "guidance", "timeline", "source", "sourceRefs"},
         )
         self.assertTrue(payload["summary"])
         self.assertTrue(payload["guidance"])
@@ -1661,3 +1690,233 @@ class DiagnosisLlmTests(TestCase):
 
         stored = Session.objects.get(pk=session_id).diagnosis.vulnerability_type
         self.assertEqual(len(stored), 30)
+
+
+class StartTrainingWithBodyTests(TestCase):
+    """훈련 시작 시 프론트가 선택을 직접 보내는 경로.
+
+    프론트가 추천 결과를 들고 곧바로 훈련으로 넘어가는 흐름을 위해 body 를 받는다.
+    body 가 없으면 기존처럼 세션에 남은 선택을 쓴다.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def start(self, **body):
+        self.client.get("/api/v1/bootstrap")
+        return self.client.post(
+            "/api/v1/training-sessions",
+            data=body or None,
+            content_type="application/json",
+        )
+
+    def test_body_selection_starts_training_without_user_info(self):
+        response = self.start(category="voice", trackId="T01-1")
+
+        self.assertEqual(response.status_code, 201)
+        session = Session.objects.get(pk=response.json()["sessionId"])
+        self.assertEqual(session.scenario.track, "T01-1")
+
+    def test_body_selection_is_recorded_in_the_session(self):
+        self.start(category="voice", trackId="T05-1")
+
+        self.assertEqual(self.client.session[SELECTION_KEY]["track"], "T05-1")
+
+    def test_entry_path_defaults_to_direct(self):
+        response = self.start(category="voice", trackId="T01-1")
+
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).entry_path, "direct"
+        )
+
+    def test_entry_path_can_be_declared(self):
+        response = self.start(
+            category="voice", trackId="T01-1", entryPath="recommended"
+        )
+
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).entry_path,
+            "recommended",
+        )
+
+    def test_entry_path_is_kept_from_the_recommendation_step(self):
+        """추천을 받은 뒤 그 결과를 body 로 다시 보내도 경로가 direct 로 바뀌지 않는다."""
+        self.client.get("/api/v1/bootstrap")
+        recommended = self.client.post(
+            "/api/v1/recommendations",
+            data={"age": "AGE_60", "concerns": ["CONCERN_01"], "habit": "HABIT_LISTEN"},
+            content_type="application/json",
+        ).json()
+
+        response = self.client.post(
+            "/api/v1/training-sessions",
+            data={"category": recommended["category"], "trackId": recommended["track"]},
+            content_type="application/json",
+        )
+
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).entry_path,
+            "recommended",
+        )
+
+    def test_difficulty_can_be_declared(self):
+        response = self.start(category="voice", trackId="T01-1", difficulty="hard")
+
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).difficulty, "hard"
+        )
+
+    def test_unknown_difficulty_is_rejected(self):
+        response = self.start(category="voice", trackId="T01-1", difficulty="extreme")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_DIFFICULTY")
+
+    def test_track_without_scenario_is_rejected(self):
+        """프론트가 고른 값도 서버가 다시 확인한다."""
+        response = self.start(category="voice", trackId="T06-2")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "SCENARIO_NOT_AVAILABLE")
+
+    def test_unknown_track_is_rejected(self):
+        response = self.start(category="voice", trackId="T99-9")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_TRACK")
+
+    def test_without_body_it_still_uses_the_session(self):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T03-1"},
+            content_type="application/json",
+        )
+
+        response = self.client.post("/api/v1/training-sessions")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).scenario.track, "T03-1"
+        )
+
+
+class RiskVocabularyTests(TestCase):
+    """turns 의 riskWarnings 와 judgment 의 riskyActions 가 같은 표기를 쓴다."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+
+    def test_every_db_action_has_an_api_name(self):
+        """새 위험행동이 모델에 추가되면 이름도 같이 정하게 강제한다."""
+        db_values = {value for value, _ in RiskyAction.ACTION_TYPE}
+
+        self.assertEqual(set(ACTION_API_NAMES), db_values)
+
+    def test_api_names_are_camel_case(self):
+        for name in ACTION_API_NAMES.values():
+            self.assertNotIn("_", name)
+            self.assertEqual(name[0], name[0].lower())
+
+    def test_both_endpoints_report_the_same_name(self):
+        """같은 위험행동이 두 응답에서 같은 문자열로 나와야 한다."""
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        session_id = self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+        with patch(
+            "training.views.step",
+            side_effect=lambda e, t, **kw: fake_step(e, t, risky_actions=["isolation_accepted"]),
+        ):
+            turn = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data={"text": "가족한테 말 안 할게요"},
+                content_type="application/json",
+            ).json()
+
+        with patch("training.views.interpret", return_value=None):
+            report = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True},
+                content_type="application/json",
+            ).json()
+
+        self.assertEqual(turn["riskWarnings"][0]["type"], "isolationAcceptance")
+        self.assertEqual(report["riskyActions"], ["isolationAcceptance"])
+
+
+class ReportSourceTests(TestCase):
+    """리포트에 훈련 근거 자료 출처를 담는다."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def judge(self, track="T01-1"):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": track},
+            content_type="application/json",
+        )
+        session_id = self.client.post("/api/v1/training-sessions").json()["sessionId"]
+        with patch("training.views.interpret", return_value=None):
+            report = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True},
+                content_type="application/json",
+            ).json()
+        return session_id, report
+
+    def test_report_carries_the_scenario_source(self):
+        session_id, report = self.judge()
+
+        scenario = Session.objects.get(pk=session_id).scenario
+        self.assertEqual(report["source"], scenario.source)
+        self.assertTrue(report["source"])
+
+    def test_report_carries_the_official_links(self):
+        session_id, report = self.judge()
+
+        scenario = Session.objects.get(pk=session_id).scenario
+        self.assertEqual(report["sourceRefs"], scenario.source_refs)
+        self.assertTrue(all(r.startswith("https://") for r in report["sourceRefs"]))
+
+    def test_non_official_links_are_dropped(self):
+        """시나리오 데이터가 잘못 들어와도 화면에 이상한 주소가 뜨지 않는다."""
+        refs = _official_links(
+            ["https://www.counterscam112.go.kr/a", "http://insecure.example", "javascript:alert(1)", 42]
+        )
+
+        self.assertEqual(refs, ["https://www.counterscam112.go.kr/a"])
+
+    def test_review_status_is_never_exposed(self):
+        """source_review_status 는 내부 관리용이다 (models.py 주석)."""
+        _, report = self.judge()
+
+        self.assertNotIn("sourceReviewStatus", report)
+        self.assertNotIn("source_review_status", str(report))
+        self.assertNotIn("human_reviewed", str(report))
+
+    def test_source_is_not_exposed_during_training(self):
+        """훈련 중에는 안 된다 - 정상 시나리오 source 가 정답을 누설한다."""
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-2"},
+            content_type="application/json",
+        )
+
+        payload = self.client.post("/api/v1/training-sessions").json()
+
+        self.assertNotIn("source", payload)
+        self.assertNotIn("sourceRefs", payload)

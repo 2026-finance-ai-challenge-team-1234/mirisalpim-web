@@ -16,6 +16,19 @@ MINOR_ACTIONS = {"link_click", "isolation_accepted"}
 #: 정상 시나리오를 사기로 신고한 경우. S~D 와 분리해서 다룬다.
 FALSE_ALARM = "오탐"
 
+#: DB·ai_core 의 snake_case 값 → API 가 내보내는 이름.
+#: turns 의 riskWarnings[].type 과 judgment 의 riskyActions 가 같은 표기를 쓰도록
+#: 여기 한 곳에서만 정한다 (API 설계 2-1: JSON 은 camelCase).
+#: 예전에는 두 응답이 각자 만들어서 isolationAcceptance / isolation_accepted 처럼
+#: 같은 개념이 다른 이름으로 나갔다.
+ACTION_API_NAMES = {
+    "personal_info": "personalInfo",
+    "link_click": "linkClick",
+    "app_install": "appInstall",
+    "transfer_consent": "transferConsent",
+    "isolation_accepted": "isolationAcceptance",
+}
+
 
 @dataclass
 class GradeResult:

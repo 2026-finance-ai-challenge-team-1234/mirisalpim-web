@@ -17,7 +17,7 @@ from django.views.decorators.http import require_GET, require_POST
 from .diagnosis import build_report
 from .diagnosis_llm import interpret
 from .engine_state import load_state, save_state
-from .grading import grade
+from .grading import ACTION_API_NAMES, grade
 from .http import error_response, json_response, parse_json_body
 from .models import DiagnosisReport, Scenario, Session, UserJudgment
 from .pii import mask_pii
@@ -123,6 +123,38 @@ def _trainable_tracks():
     return set(Scenario.objects.values_list("track", flat=True))
 
 
+#: Session.DIFFICULTY 와 같은 값. 프론트가 직접 보낼 때만 검사한다.
+DIFFICULTIES = {"easy", "normal", "hard"}
+
+#: 세션에 기록할 진입 경로 (ERD 의 SESSION.entry_path).
+ENTRY_PATHS = {"recommended", "direct"}
+
+
+def _validate_selection(category, track):
+    """분류표에 있고 시나리오까지 적재된 조합인지 확인한다.
+
+    문제가 없으면 None, 있으면 오류 응답을 돌려준다.
+    클라이언트가 보낸 available 을 믿지 않고 서버가 다시 확인하는 지점이다.
+    """
+    if category not in TAXONOMY:
+        return error_response("INVALID_CATEGORY", "지원하지 않는 카테고리입니다.", 400)
+
+    known = {
+        sub["id"]
+        for group in TAXONOMY[category]
+        for sub in group["subItems"]
+    }
+    if track not in known:
+        return error_response("INVALID_TRACK", "지원하지 않는 훈련 유형입니다.", 400)
+
+    if track not in _trainable_tracks():
+        return error_response(
+            "SCENARIO_NOT_AVAILABLE", "아직 준비되지 않은 훈련 유형입니다.", 409
+        )
+
+    return None
+
+
 @require_POST
 def user_info(request):
     """P-03-02. 직접 선택한 훈련을 세션에 기록한다.
@@ -138,36 +170,13 @@ def user_info(request):
     category = body.get("category")
     track = body.get("trackId")
 
-    if category not in TAXONOMY:
-        return error_response("INVALID_CATEGORY", "지원하지 않는 카테고리입니다.", 400)
-
-    known = {
-        sub["id"]
-        for group in TAXONOMY[category]
-        for sub in group["subItems"]
-    }
-    if track not in known:
-        return error_response("INVALID_TRACK", "지원하지 않는 훈련 유형입니다.", 400)
-
-    # 클라이언트가 보낸 available 을 믿지 않고 서버가 다시 확인한다.
-    if track not in _trainable_tracks():
-        return error_response(
-            "SCENARIO_NOT_AVAILABLE", "아직 준비되지 않은 훈련 유형입니다.", 409
-        )
+    failure = _validate_selection(category, track)
+    if failure is not None:
+        return failure
 
     store_selection(request.session, category, track, entry_path="direct")
 
     return json_response({"category": category, "track": track})
-
-
-def _find_track(track):
-    """분류표에서 track 코드가 속한 (카테고리, 대분류, 소분류) 를 찾는다."""
-    for category, groups in TAXONOMY.items():
-        for group in groups:
-            for sub in group["subItems"]:
-                if sub["id"] == track:
-                    return category, group, sub
-    return None, None, None
 
 
 @require_POST
@@ -187,33 +196,46 @@ def recommendations(request):
             "SCENARIO_NOT_AVAILABLE", "훈련 가능한 시나리오가 없습니다.", 503
         )
 
-    category, group, sub = _find_track(result["track"])
-    if category is None:
-        # 매핑표가 분류표에 없는 코드를 가리키는 상태 - 데이터 정합성 문제다.
-        return error_response(
-            "SCENARIO_NOT_AVAILABLE", "훈련 가능한 시나리오가 없습니다.", 503
-        )
-
     store_selection(
         request.session,
-        category,
+        result["category"],
         result["track"],
         entry_path="recommended",
         difficulty=result["difficulty"],
     )
 
-    reasons = result["matched"] or ["평소 활동과 대응 습관을 기준으로 골랐습니다"]
+    return json_response(result)
 
-    return json_response(
-        {
-            "category": category,
-            "track": result["track"],
-            "title": f"{sub['name']} 대응 훈련",
-            "description": group["desc"],
-            "reasons": reasons,
-            "suitability": str(min(97, 78 + 7 * len(result["matched"]))),
-        }
-    )
+
+def _selection_from_body(request, body):
+    """프론트가 직접 보낸 선택을 검증하고 세션에 기록한다.
+
+    반환: (선택, 오류응답). 둘 중 하나만 값이 있다.
+    """
+    category = body.get("category")
+    track = body.get("trackId")
+
+    failure = _validate_selection(category, track)
+    if failure is not None:
+        return None, failure
+
+    difficulty = body.get("difficulty")
+    if difficulty is not None and difficulty not in DIFFICULTIES:
+        return None, error_response(
+            "INVALID_DIFFICULTY", "지원하지 않는 난이도입니다.", 400
+        )
+
+    # entryPath 를 안 보내면 앞선 단계가 세션에 남긴 값을 유지한다. 그것도 없으면
+    # 직접 선택으로 본다 (ERD 의 추천 경로 vs 직접 선택 비교에 쓰이는 값이다).
+    previous = get_selection(request.session) or {}
+    entry_path = body.get("entryPath") or previous.get("entry_path") or "direct"
+    if entry_path not in ENTRY_PATHS:
+        return None, error_response(
+            "INVALID_ENTRY_PATH", "지원하지 않는 진입 경로입니다.", 400
+        )
+
+    store_selection(request.session, category, track, entry_path, difficulty)
+    return get_selection(request.session), None
 
 
 @require_POST
@@ -223,15 +245,29 @@ def start_training(request):
     LLM 을 호출하지 않는다 - 첫 발화는 시나리오 카드의 opening 을 그대로 쓴다
     (ai_core.start_session: "결정적이고, 지연이 0이고, 반드시 각본 위에서 시작한다").
 
+    고른 유형은 두 가지 방법 중 하나로 전달된다.
+
+      (a) body 없이 호출 - 앞선 /recommendations 나 /user-info 가 세션에 남긴 값을 쓴다.
+      (b) body 로 명시 - {"category", "trackId", "difficulty"?, "entryPath"?}
+          프론트가 추천 결과를 직접 들고 훈련으로 넘어가는 흐름을 위한 것이다.
+          보낸 값은 세션에도 기록해 이후 흐름과 어긋나지 않게 한다.
+
     ⚠️ 응답에 시나리오 제목·페르소나·목표를 담지 않는다. 제목이 "검찰 사칭 —",
     "경찰 민원 회신 —" 처럼 is_scam 을 그대로 누설하고, 페르소나 표기도 시나리오마다
     "가상 위협 발신자"처럼 정답을 알려준다. 훈련생은 지금 상황이 사기인지 알면 안 된다.
     """
-    selection = get_selection(request.session)
-    if not selection:
-        return error_response(
-            "NO_SELECTION", "먼저 훈련 유형을 선택해 주세요.", 400
-        )
+    body = parse_json_body(request) or {}
+
+    if body.get("category") or body.get("trackId"):
+        selection, failure = _selection_from_body(request, body)
+        if failure is not None:
+            return failure
+    else:
+        selection = get_selection(request.session)
+        if not selection:
+            return error_response(
+                "NO_SELECTION", "먼저 훈련 유형을 선택해 주세요.", 400
+            )
 
     candidates = list(
         Scenario.objects.filter(
@@ -273,15 +309,16 @@ def start_training(request):
     )
 
 
-#: 위험 신호를 프론트 계약(camelCase)으로 옮기고 개입 문구를 붙인다 (기능명세 F-14).
-#: 앞의 5종은 판정기가 관찰한 위험행동(RiskyAction.ACTION_TYPE), 뒤는 입력에서
-#: 정규식으로 곧바로 잡은 개인정보다.
+#: 위험 신호에 개입 문구를 붙인다 (기능명세 F-14). 앞의 5종은 판정기가 관찰한
+#: 위험행동(RiskyAction.ACTION_TYPE), 뒤는 입력에서 정규식으로 곧바로 잡은 개인정보다.
+#: 이름은 grading.ACTION_API_NAMES 에서 가져온다 - judgment 의 riskyActions 와
+#: 같은 표기를 쓰기 위해서다. 여기서 직접 문자열을 적으면 다시 갈라진다.
 RISK_WARNINGS = {
-    "personal_info": ("personalInfo", "방금 개인정보를 알려주셨습니다. 실제였다면 그대로 도용될 수 있습니다."),
-    "link_click": ("linkClick", "문자 속 링크를 눌렀습니다. 실제였다면 악성 앱이 설치될 수 있습니다."),
-    "app_install": ("appInstall", "앱 설치에 동의하셨습니다. 실제였다면 인증번호와 화면이 통째로 넘어갑니다."),
-    "transfer_consent": ("transferConsent", "송금에 동의하셨습니다. 실제였다면 돈이 즉시 빠져나갑니다."),
-    "isolation_accepted": ("isolationAcceptance", "가족·주변과 연락하지 않기로 하셨습니다. 고립 유도는 사기의 결정적 신호입니다."),
+    "personal_info": (ACTION_API_NAMES["personal_info"], "방금 개인정보를 알려주셨습니다. 실제였다면 그대로 도용될 수 있습니다."),
+    "link_click": (ACTION_API_NAMES["link_click"], "문자 속 링크를 눌렀습니다. 실제였다면 악성 앱이 설치될 수 있습니다."),
+    "app_install": (ACTION_API_NAMES["app_install"], "앱 설치에 동의하셨습니다. 실제였다면 인증번호와 화면이 통째로 넘어갑니다."),
+    "transfer_consent": (ACTION_API_NAMES["transfer_consent"], "송금에 동의하셨습니다. 실제였다면 돈이 즉시 빠져나갑니다."),
+    "isolation_accepted": (ACTION_API_NAMES["isolation_accepted"], "가족·주변과 연락하지 않기로 하셨습니다. 고립 유도는 사기의 결정적 신호입니다."),
     "resident_registration_number": ("personalInfo", "방금 주민등록번호를 알려주셨습니다. 실제였다면 이 정보로 지금 대출이 실행됩니다."),
     "account_number": ("personalInfo", "방금 계좌번호를 알려주셨습니다. 실제였다면 대포통장으로 쓰일 수 있습니다."),
     "card_number": ("personalInfo", "방금 카드번호를 알려주셨습니다. 실제였다면 즉시 결제에 쓰입니다."),
@@ -514,12 +551,14 @@ def submit_judgment(request, session_id):
 
         scenario = load_scenario(session.scenario_id)
         state = load_state(session)
+        source_refs = session.scenario.source_refs
 
     state.user_judgment = EngineJudgment(turn=state.turn, is_scam_guess=is_scam_guess)
 
     # 등급·놓친 단서·행동 가이드는 코드가 정한다 (리포트 문서 §8).
     result = grade(scenario, state)
-    report = build_report(scenario, state, result)
+    # source_refs 는 ai_core.types.Scenario 에 없는 필드라 DB 쪽에서 읽는다.
+    report = build_report(scenario, state, result, source_refs=source_refs)
 
     # 트랜잭션 밖 - 실패하거나 늦으면 규칙 기반 문장을 그대로 쓴다.
     interpreted = interpret(scenario, state, result, report)
