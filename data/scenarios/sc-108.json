@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "scenario_id": "sc-108",
+  "category": "sms",
+  "track": "S08-4",
+  "target_tracks": [
+    "young",
+    "middle_age"
+  ],
+  "title": "고수익 투자 제안 — 독립 확인 행동 훈련",
+  "source": "KISA 보호나라·경찰청 공개 스미싱 예방자료를 바탕으로 재구성한 훈련 시나리오",
+  "source_refs": [
+    "https://www.boho.or.kr/",
+    "https://www.counterscam112.go.kr/"
+  ],
+  "source_review_status": "auto_labeled",
+  "is_scam": true,
+  "difficulty": 2,
+  "goal": "훈련생이 '고수익 투자 제안' 유형의 문자에서 외부 검증 없이 링크·앱·정보입력 요구를 따르는지 평가",
+  "learning_objectives": [
+    "훈련생이 '고수익 투자 제안' 유형의 초기 미끼를 판별하는지 평가",
+    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
+    "훈련생이 문자 내부 링크·앱·정보입력 요구를 즉시 따르지 않는지 평가"
+  ],
+  "max_turns": 16,
+  "persona": {
+    "display_name": "가상 투자·대출 문자 발신자",
+    "name": "",
+    "org": "가상 메시지 발신처",
+    "role": "문자 발신자",
+    "tone": "차분하고 사무적",
+    "rules": [
+      "훈련 맥락을 유지하되 실제 작동 가능한 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다",
+      "한 번에 1~2문장으로 짧게 응답한다",
+      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
+    ],
+    "resistance_strategy": [
+      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
+      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
+    ],
+    "voice_preset": "text_only"
+  },
+  "stages": [
+    {
+      "id": "opening",
+      "objective": "유형별 미끼 메시지 제시",
+      "tactics": [
+        "투자·대출",
+        "고수익 투자 제안",
+        "훈련용 링크만 사용"
+      ],
+      "min_turns": 1,
+      "advance_when": [
+        "훈련생이 메시지에 반응하거나 내용을 확인하려 함"
+      ],
+      "opening": "[안내] 고수익 투자 제안 관련 확인이 필요합니다. 문자 안의 [훈련용 링크]에서 내용을 확인해 주세요."
+    },
+    {
+      "id": "context_check",
+      "objective": "훈련생이 메시지를 실제 상황으로 받아들이는지 확인",
+      "tactics": [
+        "상황 확인 질문",
+        "긴급성 암시"
+      ],
+      "min_turns": 1,
+      "advance_when": [
+        "훈련생이 발신자 주장에 응답함"
+      ]
+    },
+    {
+      "id": "risk_signal_exposure",
+      "objective": "핵심 위험 신호를 노출하되 실제 실행 정보는 제공하지 않음",
+      "tactics": [
+        "[훈련용 링크] 제시",
+        "앱·로그인·정보입력 요구를 추상적으로 언급"
+      ],
+      "min_turns": 1,
+      "advance_when": [
+        "훈련생이 링크·앱·정보입력에 동의하거나 거부함"
+      ]
+    },
+    {
+      "id": "suspicion_handling",
+      "objective": "의심 또는 독립 확인 시도를 평가",
+      "tactics": [
+        "의심을 낮추려는 짧은 설명",
+        "실제 기관 연락처 제시 금지"
+      ],
+      "min_turns": 1,
+      "advance_when": [
+        "훈련생이 공식 채널 재확인 의사를 밝히거나 계속 진행함"
+      ]
+    },
+    {
+      "id": "termination",
+      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
+      "tactics": [
+        "실제 개인정보·금융정보·인증정보 수집 금지"
+      ],
+      "min_turns": 1,
+      "advance_when": [
+        "훈련 성공 또는 종료 조건 충족"
+      ]
+    }
+  ],
+  "tell_points": [
+    {
+      "id": "tp1",
+      "stage": "opening",
+      "signal_type": "risk",
+      "trigger": "'고수익 투자 제안' 명목으로 문자 안에서 즉시 확인을 유도함",
+      "why": "발신자 표시만으로 기관·가족·업체의 실제 연락인지 확인할 수 없습니다. 별도 공식 채널 확인이 필요합니다.",
+      "weight": 2,
+      "first_detectable_turn": 1
+    },
+    {
+      "id": "tp2",
+      "stage": "risk_signal_exposure",
+      "signal_type": "risk",
+      "trigger": "문자 내부의 [훈련용 링크]에서 절차를 계속하도록 유도함",
+      "why": "문자 내부 링크를 그대로 따라가기보다 공식 앱·홈페이지를 직접 열어 같은 안내가 있는지 확인해야 합니다.",
+      "weight": 1,
+      "first_detectable_turn": 3
+    },
+    {
+      "id": "tp3",
+      "stage": "risk_signal_exposure",
+      "signal_type": "risk",
+      "trigger": "앱 설치·로그인·개인정보·금융정보·인증정보 입력 중 하나를 요구하려 함",
+      "why": "문자에서 시작된 민감정보 입력이나 앱 설치 요구는 강한 위험 신호입니다.",
+      "weight": 1,
+      "first_detectable_turn": 5
+    }
+  ],
+  "end_conditions": [
+    {
+      "id": "ec1",
+      "condition": "훈련생이 상대가 알려준 수단이 아닌 공식 앱·홈페이지·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec2",
+      "condition": "훈련생이 개인정보·금융정보·인증정보 제공, 링크 클릭, 앱 설치 또는 송금 요구를 명확히 거부함",
+      "result": "training_success"
+    },
+    {
+      "id": "ec3",
+      "condition": "훈련생이 보이스피싱·스미싱 가능성을 인지하고 대화를 종료하겠다고 명확히 밝힘",
+      "result": "training_success"
+    },
+    {
+      "id": "ec4",
+      "condition": "훈련생이 더 이상 대화하지 않겠다는 의사를 반복적으로 표현함",
+      "result": "terminate"
+    }
+  ],
+  "forbidden": [
+    "실제 주민등록번호 전체",
+    "실제 계좌번호 전체",
+    "실제 카드번호 전체",
+    "OTP·문자 인증번호·비밀번호",
+    "실제 송금·현금 인출을 수행하도록 하는 구체 지시",
+    "실제 작동하는 URL·악성 APK·앱 설치 경로",
+    "실제 원격제어 접속 정보",
+    "실존 개인의 신원 정보"
+  ],
+  "debrief_points": [
+    "'고수익 투자 제안' 유형은 발신자가 제시한 상황 자체보다 독립 확인 가능 여부를 먼저 봐야 함",
+    "상대가 알려준 전화번호·링크가 아니라 공식 앱·홈페이지·대표번호를 직접 찾아 확인하는 것이 중요함",
+    "민감정보 제공·앱 설치·송금 같은 행동은 통화나 문자 흐름 안에서 즉시 실행하지 않아야 함"
+  ]
+}
