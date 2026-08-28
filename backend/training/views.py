@@ -551,12 +551,14 @@ def submit_judgment(request, session_id):
 
         scenario = load_scenario(session.scenario_id)
         state = load_state(session)
+        source_refs = session.scenario.source_refs
 
     state.user_judgment = EngineJudgment(turn=state.turn, is_scam_guess=is_scam_guess)
 
     # 등급·놓친 단서·행동 가이드는 코드가 정한다 (리포트 문서 §8).
     result = grade(scenario, state)
-    report = build_report(scenario, state, result)
+    # source_refs 는 ai_core.types.Scenario 에 없는 필드라 DB 쪽에서 읽는다.
+    report = build_report(scenario, state, result, source_refs=source_refs)
 
     # 트랜잭션 밖 - 실패하거나 늦으면 규칙 기반 문장을 그대로 쓴다.
     interpreted = interpret(scenario, state, result, report)

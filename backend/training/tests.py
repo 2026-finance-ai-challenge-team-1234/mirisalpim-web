@@ -22,6 +22,7 @@ from django.core.cache import cache
 from django.core.management import call_command
 from django.test import Client, TestCase, TransactionTestCase
 
+from .diagnosis import _official_links
 from .engine_state import load_state, save_state
 from .grading import ACTION_API_NAMES, first_detectable_turn, grade
 from .models import RiskyAction, Scenario, Session, Stage, TellPoint
@@ -956,7 +957,7 @@ class SubmitJudgmentTests(TestCase):
             set(payload),
             {"grade", "isCorrect", "judgedTurn", "firstDetectableTurn", "summary",
              "vulnerabilityPattern", "strength", "weakness", "missedTellPoints",
-             "riskyActions", "guidance", "timeline"},
+             "riskyActions", "guidance", "timeline", "source", "sourceRefs"},
         )
         self.assertTrue(payload["summary"])
         self.assertTrue(payload["guidance"])
@@ -1851,3 +1852,71 @@ class RiskVocabularyTests(TestCase):
 
         self.assertEqual(turn["riskWarnings"][0]["type"], "isolationAcceptance")
         self.assertEqual(report["riskyActions"], ["isolationAcceptance"])
+
+
+class ReportSourceTests(TestCase):
+    """리포트에 훈련 근거 자료 출처를 담는다."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def judge(self, track="T01-1"):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": track},
+            content_type="application/json",
+        )
+        session_id = self.client.post("/api/v1/training-sessions").json()["sessionId"]
+        with patch("training.views.interpret", return_value=None):
+            report = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True},
+                content_type="application/json",
+            ).json()
+        return session_id, report
+
+    def test_report_carries_the_scenario_source(self):
+        session_id, report = self.judge()
+
+        scenario = Session.objects.get(pk=session_id).scenario
+        self.assertEqual(report["source"], scenario.source)
+        self.assertTrue(report["source"])
+
+    def test_report_carries_the_official_links(self):
+        session_id, report = self.judge()
+
+        scenario = Session.objects.get(pk=session_id).scenario
+        self.assertEqual(report["sourceRefs"], scenario.source_refs)
+        self.assertTrue(all(r.startswith("https://") for r in report["sourceRefs"]))
+
+    def test_non_official_links_are_dropped(self):
+        """시나리오 데이터가 잘못 들어와도 화면에 이상한 주소가 뜨지 않는다."""
+        refs = _official_links(
+            ["https://www.counterscam112.go.kr/a", "http://insecure.example", "javascript:alert(1)", 42]
+        )
+
+        self.assertEqual(refs, ["https://www.counterscam112.go.kr/a"])
+
+    def test_review_status_is_never_exposed(self):
+        """source_review_status 는 내부 관리용이다 (models.py 주석)."""
+        _, report = self.judge()
+
+        self.assertNotIn("sourceReviewStatus", report)
+        self.assertNotIn("source_review_status", str(report))
+        self.assertNotIn("human_reviewed", str(report))
+
+    def test_source_is_not_exposed_during_training(self):
+        """훈련 중에는 안 된다 - 정상 시나리오 source 가 정답을 누설한다."""
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-2"},
+            content_type="application/json",
+        )
+
+        payload = self.client.post("/api/v1/training-sessions").json()
+
+        self.assertNotIn("source", payload)
+        self.assertNotIn("sourceRefs", payload)
