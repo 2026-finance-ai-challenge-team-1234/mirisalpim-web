@@ -10,7 +10,7 @@
    출력으로 덮어쓰면 된다. grade·missed_tell_points·guidance 는 덮어쓰지 않는다.
 """
 
-from .grading import FALSE_ALARM
+from .grading import ACTION_API_NAMES, FALSE_ALARM
 
 #: 놓친 단서 설명은 시나리오 카드의 why 를 그대로 쓴다 (리포트 문서 §5-④:
 #: "이 부분은 LLM 생성이 필요하지 않다").
@@ -43,7 +43,9 @@ def build_report(scenario, state, result):
         "strength": _strength(state, result),
         "weakness": _weakness(missed, result),
         "missedTellPoints": missed,
-        "riskyActions": result.risky_actions,
+        "riskyActions": [
+            ACTION_API_NAMES.get(a, a) for a in result.risky_actions
+        ],
         "guidance": list(scenario.debrief_points),
         "timeline": _timeline(state, tell_points, result),
     }

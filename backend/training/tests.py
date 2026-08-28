@@ -23,8 +23,8 @@ from django.core.management import call_command
 from django.test import Client, TestCase, TransactionTestCase
 
 from .engine_state import load_state, save_state
-from .grading import first_detectable_turn, grade
-from .models import Scenario, Session, Stage, TellPoint
+from .grading import ACTION_API_NAMES, first_detectable_turn, grade
+from .models import RiskyAction, Scenario, Session, Stage, TellPoint
 from .throttle import TURN_RATE_LIMIT, TURN_RATE_WINDOW_SECONDS
 from .selection import SELECTION_KEY
 from .views import ANON_CLIENT_ID_KEY, ConcurrentTurnError, _commit_turn
@@ -1799,3 +1799,55 @@ class StartTrainingWithBodyTests(TestCase):
         self.assertEqual(
             Session.objects.get(pk=response.json()["sessionId"]).scenario.track, "T03-1"
         )
+
+
+class RiskVocabularyTests(TestCase):
+    """turns 의 riskWarnings 와 judgment 의 riskyActions 가 같은 표기를 쓴다."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+
+    def test_every_db_action_has_an_api_name(self):
+        """새 위험행동이 모델에 추가되면 이름도 같이 정하게 강제한다."""
+        db_values = {value for value, _ in RiskyAction.ACTION_TYPE}
+
+        self.assertEqual(set(ACTION_API_NAMES), db_values)
+
+    def test_api_names_are_camel_case(self):
+        for name in ACTION_API_NAMES.values():
+            self.assertNotIn("_", name)
+            self.assertEqual(name[0], name[0].lower())
+
+    def test_both_endpoints_report_the_same_name(self):
+        """같은 위험행동이 두 응답에서 같은 문자열로 나와야 한다."""
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        session_id = self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+        with patch(
+            "training.views.step",
+            side_effect=lambda e, t, **kw: fake_step(e, t, risky_actions=["isolation_accepted"]),
+        ):
+            turn = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data={"text": "가족한테 말 안 할게요"},
+                content_type="application/json",
+            ).json()
+
+        with patch("training.views.interpret", return_value=None):
+            report = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True},
+                content_type="application/json",
+            ).json()
+
+        self.assertEqual(turn["riskWarnings"][0]["type"], "isolationAcceptance")
+        self.assertEqual(report["riskyActions"], ["isolationAcceptance"])

@@ -17,7 +17,7 @@ from django.views.decorators.http import require_GET, require_POST
 from .diagnosis import build_report
 from .diagnosis_llm import interpret
 from .engine_state import load_state, save_state
-from .grading import grade
+from .grading import ACTION_API_NAMES, grade
 from .http import error_response, json_response, parse_json_body
 from .models import DiagnosisReport, Scenario, Session, UserJudgment
 from .pii import mask_pii
@@ -309,15 +309,16 @@ def start_training(request):
     )
 
 
-#: 위험 신호를 프론트 계약(camelCase)으로 옮기고 개입 문구를 붙인다 (기능명세 F-14).
-#: 앞의 5종은 판정기가 관찰한 위험행동(RiskyAction.ACTION_TYPE), 뒤는 입력에서
-#: 정규식으로 곧바로 잡은 개인정보다.
+#: 위험 신호에 개입 문구를 붙인다 (기능명세 F-14). 앞의 5종은 판정기가 관찰한
+#: 위험행동(RiskyAction.ACTION_TYPE), 뒤는 입력에서 정규식으로 곧바로 잡은 개인정보다.
+#: 이름은 grading.ACTION_API_NAMES 에서 가져온다 - judgment 의 riskyActions 와
+#: 같은 표기를 쓰기 위해서다. 여기서 직접 문자열을 적으면 다시 갈라진다.
 RISK_WARNINGS = {
-    "personal_info": ("personalInfo", "방금 개인정보를 알려주셨습니다. 실제였다면 그대로 도용될 수 있습니다."),
-    "link_click": ("linkClick", "문자 속 링크를 눌렀습니다. 실제였다면 악성 앱이 설치될 수 있습니다."),
-    "app_install": ("appInstall", "앱 설치에 동의하셨습니다. 실제였다면 인증번호와 화면이 통째로 넘어갑니다."),
-    "transfer_consent": ("transferConsent", "송금에 동의하셨습니다. 실제였다면 돈이 즉시 빠져나갑니다."),
-    "isolation_accepted": ("isolationAcceptance", "가족·주변과 연락하지 않기로 하셨습니다. 고립 유도는 사기의 결정적 신호입니다."),
+    "personal_info": (ACTION_API_NAMES["personal_info"], "방금 개인정보를 알려주셨습니다. 실제였다면 그대로 도용될 수 있습니다."),
+    "link_click": (ACTION_API_NAMES["link_click"], "문자 속 링크를 눌렀습니다. 실제였다면 악성 앱이 설치될 수 있습니다."),
+    "app_install": (ACTION_API_NAMES["app_install"], "앱 설치에 동의하셨습니다. 실제였다면 인증번호와 화면이 통째로 넘어갑니다."),
+    "transfer_consent": (ACTION_API_NAMES["transfer_consent"], "송금에 동의하셨습니다. 실제였다면 돈이 즉시 빠져나갑니다."),
+    "isolation_accepted": (ACTION_API_NAMES["isolation_accepted"], "가족·주변과 연락하지 않기로 하셨습니다. 고립 유도는 사기의 결정적 신호입니다."),
     "resident_registration_number": ("personalInfo", "방금 주민등록번호를 알려주셨습니다. 실제였다면 이 정보로 지금 대출이 실행됩니다."),
     "account_number": ("personalInfo", "방금 계좌번호를 알려주셨습니다. 실제였다면 대포통장으로 쓰일 수 있습니다."),
     "card_number": ("personalInfo", "방금 카드번호를 알려주셨습니다. 실제였다면 즉시 결제에 쓰입니다."),
