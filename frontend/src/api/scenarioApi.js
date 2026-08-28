@@ -2,22 +2,10 @@
 //
 // P-03-01. 보이스피싱/스미싱 전체 시나리오 목록(8대 중분류 + 소분류) 조회.
 //
-// ⚠️ 스펙 문서(all-scenarios)의 응답 예시는 items가 단순 문자열 배열이고
-// badge/desc가 없어서, 지금 프론트에 필요한 정보(id/code/badge/desc)가 부족함.
-// 아래 제안 형태로 백엔드에 맞춰달라고 요청 필요:
-//
-// GET /api/v1/all-scenarios 제안 응답 형태:
-// {
-//   "voice": [
-//     { "id": "T01", "title": "1. 기관 사칭", "badge": "🛡️ 다빈도 수법", "desc": "...",
-//       "subItems": [{ "id": "T01-1", "code": "prosecution_impersonation", "name": "검찰 사칭" }, ...] },
-//     ...
-//   ],
-//   "smishing": [ ... 동일 구조 ... ]
-// }
-//
-// 백엔드 준비 전까지는 기존에 프론트에 하드코딩되어 있던 데이터를 그대로 fallback으로 사용함.
-// 즉 지금 당장은 화면 동작이 이전과 100% 동일함.
+// 목업 폴백 정책:
+// - 개발 환경(import.meta.env.DEV)에서만 목업으로 대체함. 운영 빌드에서는 에러를 그대로 던져서
+//   백엔드 장애가 조용히 감춰지지 않게 함.
+// - 목업으로 대체된 경우 결과에 __isMock: true 를 붙여, 화면에서 배지를 띄울 수 있게 함.
 
 import { apiGet } from "./client";
 
@@ -30,8 +18,9 @@ export async function fetchAllScenarios() {
     }
     throw new Error("응답 형식이 예상과 다릅니다.");
   } catch (err) {
-    console.warn("[scenarioApi] 백엔드 호출 실패/형식 불일치, 기존 데이터로 대체합니다:", err.message);
-    return FALLBACK_SCENARIOS;
+    if (!import.meta.env.DEV) throw err; // 운영에서는 실패를 감추지 않음
+    console.warn("[scenarioApi] 백엔드 호출 실패/형식 불일치, 목업 데이터로 대체합니다:", err.message);
+    return { ...FALLBACK_SCENARIOS, __isMock: true };
   }
 }
 

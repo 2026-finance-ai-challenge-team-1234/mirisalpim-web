@@ -1,6 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import { startTrainingSession, sendTurn, submitJudgment } from "../api/trainingApi";
+import { newIdempotencyKey } from "../api/client";
+
+const MAX_INPUT_CHARS = 200;
 
 function readStoredJson(key) {
   try {
@@ -11,49 +15,12 @@ function readStoredJson(key) {
   }
 }
 
-function readStoredUserName() {
-  const savedUser = readStoredJson("userSurveyData");
-  return savedUser?.userName || "고객";
-}
-
-function buildInitialSimulationState() {
-  const userName = readStoredUserName();
+// 훈련 채널만 로컬에서 미리 판단 (화면 레이아웃 결정용).
+// 실제 시나리오 내용은 전부 서버가 준다.
+function readInitialCategory() {
   const savedScenario = readStoredJson("selectedScenario");
-
-  let category = localStorage.getItem("selectedCategory") || "voice";
-  if (savedScenario) {
-    category = savedScenario.isVoice ? "voice" : "smishing";
-  }
-
-  if (category === "smishing") {
-    return {
-      category: "smishing",
-      scenarioInfo: {
-        caller: "국민건강보험공단",
-        subInfo: "1577-0000 • 환급금 지급팀",
-      },
-      chatHistory: [
-        {
-          sender: "bot",
-          text: `[국민건강보험] ${userName}님 환급금 184,500원 미신청 내역이 있습니다. 오늘 24시까지 아래 링크를 통해 신청해 주시기 바랍니다.`,
-          url: "https://training-link.example/claim",
-        },
-      ],
-      voiceOpening: null,
-    };
-  }
-
-  const voiceOpening = `${userName} 고객님 맞으시죠? 서울중앙지검 김민수 수사관입니다. 현재 본인 명의 계좌가 대포통장 범죄 사건에 연루되어 연락드렸습니다. 당황하지 마시고 제 질문에 답변해 주세요.`;
-
-  return {
-    category: "voice",
-    scenarioInfo: {
-      caller: "서울중앙지검 김민수 수사관",
-      subInfo: "02-1234-5678 • 이상 거래 감지팀",
-    },
-    chatHistory: [{ sender: "bot", text: voiceOpening }],
-    voiceOpening,
-  };
+  if (savedScenario) return savedScenario.isVoice ? "voice" : "smishing";
+  return localStorage.getItem("selectedCategory") || "voice";
 }
 
 function LiveBadge() {
@@ -71,7 +38,18 @@ function formatCallTime(totalSeconds) {
   return `${m}:${s}`;
 }
 
-// 통화 화면 아이콘 버튼 (음소거/스피커처럼 토글되는 작은 원형 버튼)
+// ⚠️ 브라우저 내장 TTS는 임시. 팀 결정은 서버 경유 음성 합성이라 추후 교체 예정.
+// 컴포넌트 밖에 두어야 useEffect보다 먼저 선언됨(react-hooks/immutability 규칙).
+function speakText(text) {
+  if (!text) return;
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "ko-KR";
+  utterance.rate = 0.9;
+  window.speechSynthesis.speak(utterance);
+}
+
 function CallToggleButton({ active, onClick, label, children }) {
   return (
     <div className="flex flex-col items-center">
@@ -90,136 +68,268 @@ function CallToggleButton({ active, onClick, label, children }) {
   );
 }
 
+// 사용자가 시작 화면에서 겪는 오류를 안내하는 문구.
+// 백엔드 오류 코드별로 다음 행동을 다르게 제시함.
+function describeError(err) {
+  switch (err?.code) {
+    case "NO_SELECTION":
+      return { text: "훈련 유형이 선택되지 않았어요. 유형을 다시 골라주세요.", action: "reselect" };
+    case "SCENARIO_NOT_AVAILABLE":
+      return { text: "아직 준비되지 않은 유형이에요. 다른 유형을 선택해주세요.", action: "reselect" };
+    case "SESSION_NOT_FOUND":
+      return { text: "훈련 세션을 찾을 수 없어요. 처음부터 다시 시작해주세요.", action: "restart" };
+    case "SESSION_ENDED":
+    case "ALREADY_JUDGED":
+      return { text: "이미 종료된 훈련이에요. 결과 리포트를 확인해주세요.", action: "report" };
+    case "RATE_LIMITED":
+      return { text: "요청이 너무 많아요. 잠시 후 다시 시도해주세요.", action: "retry" };
+    case "AI_TIMEOUT":
+    case "AI_ERROR":
+      return { text: "응답을 받아오지 못했어요. 다시 시도해주세요.", action: "retry" };
+    case "INPUT_TOO_LARGE":
+      return { text: "입력이 너무 길어요. 200자 이내로 줄여주세요.", action: "retry" };
+    default:
+      return { text: err?.message || "문제가 발생했어요. 다시 시도해주세요.", action: "retry" };
+  }
+}
+
 export default function Simulation() {
   const navigate = useNavigate();
 
-  const [initialState] = useState(buildInitialSimulationState);
-  const category = initialState.category;
-  const scenarioInfo = initialState.scenarioInfo;
+  const [category] = useState(readInitialCategory);
 
-  const [chatHistory, setChatHistory] = useState(initialState.chatHistory);
-  const [isListening, setIsListening] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [turnNo, setTurnNo] = useState(0);
+  const [maxTurns, setMaxTurns] = useState(null);
+  const [ended, setEnded] = useState(false);
+
+  const [starting, setStarting] = useState(true);
+  const [waiting, setWaiting] = useState(false); // 사기범 응답 대기(8~10초)
+  const [error, setError] = useState(null);
+
   const [inputText, setInputText] = useState("");
-  const [showSmishingWarning, setShowSmishingWarning] = useState(false);
-  const [callSeconds, setCallSeconds] = useState(0);
-
-  // ⚠️ 음소거/스피커는 실제 오디오 라우팅 없이 화면 연출/상태 토글용임
-  // (브라우저에서 기기 스피커·마이크 하드웨어를 직접 전환하는 건 불가능함)
+  const [isListening, setIsListening] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
+  const [callSeconds, setCallSeconds] = useState(0);
 
-  // 음성 모드일 때만 첫 마디를 TTS로 재생 (마운트 시 1회)
+  const [riskWarning, setRiskWarning] = useState(null); // { type, message }
+  const [showJudgment, setShowJudgment] = useState(false);
+  const [judging, setJudging] = useState(false);
+
+  const chatEndRef = useRef(null);
+  const categoryRef = useRef(category); // 최초 마운트 effect에서 category를 안전하게 참조
+
+  // ───────── 훈련 시작: 사기범 첫 마디 받아오기 ─────────
   useEffect(() => {
-    const firstMessage = initialState.voiceOpening;
-    if (firstMessage && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(firstMessage);
-      utterance.lang = "ko-KR";
-      utterance.rate = 0.9;
-      window.speechSynthesis.speak(utterance);
-    }
+    let cancelled = false;
+
+    startTrainingSession()
+      .then((data) => {
+        if (cancelled) return;
+        setSessionId(data.sessionId);
+        setTurnNo(data.turnNo ?? 1);
+        setMaxTurns(data.maxTurns ?? null);
+        setChatHistory(data.opening ? [{ sender: "bot", text: data.opening }] : []);
+        setStarting(false);
+        if (categoryRef.current === "voice") speakText(data.opening);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[Simulation] 훈련 시작 실패:", err);
+        setError(describeError(err));
+        setStarting(false);
+      });
 
     return () => {
+      cancelled = true;
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
-  }, [initialState.voiceOpening]);
+     
+  }, []);
 
-  // 통화 중 표시용 실시간 타이머 (음성 모드 전용)
+  // 통화 타이머 (음성 모드, 훈련 시작 후에만)
   useEffect(() => {
-    if (category !== "voice") return;
+    if (category !== "voice" || starting || error) return;
     const id = setInterval(() => setCallSeconds((s) => s + 1), 1000);
     return () => clearInterval(id);
-  }, [category]);
+  }, [category, starting, error]);
 
-  const handleUserResponse = (userMsg) => {
-    if (!userMsg.trim()) return;
+  // 새 메시지가 오면 아래로 자동 스크롤
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory, waiting]);
 
-    const newHistory = [...chatHistory, { sender: "user", text: userMsg }];
-    setChatHistory(newHistory);
+  // ───────── 대화 한 턴 ─────────
+  const handleUserResponse = async (userMsg) => {
+    const text = userMsg.trim();
+    if (!text || !sessionId || waiting || ended) return;
+
+    setChatHistory((prev) => [...prev, { sender: "user", text }]);
     setInputText("");
+    setWaiting(true);
+    setError(null);
 
-    setTimeout(() => {
-      let aiReply = "본인 명의 계좌가 맞는지 확인이 필요합니다. 안내해 드리는 지침에 따라주시기 바랍니다.";
-      if (category === "smishing") {
-        aiReply = "[국민건강보험] 본인인증이 완료되지 않았습니다. 안내된 절차를 다시 확인해 주세요.";
+    try {
+      const data = await sendTurn(sessionId, text, newIdempotencyKey());
+
+      // 위험 행동(개인정보 노출 등)이 감지되면 즉시 개입 팝업
+      if (data.riskWarnings?.length) {
+        setRiskWarning(data.riskWarnings[0]);
       }
 
-      setChatHistory((prev) => [...prev, { sender: "bot", text: aiReply }]);
+      setChatHistory((prev) => [...prev, { sender: "bot", text: data.scammerText }]);
+      setTurnNo(data.turnNo ?? turnNo + 1);
+      if (category === "voice") speakText(data.scammerText);
 
-      if (category === "voice" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(aiReply);
-        utterance.lang = "ko-KR";
-        utterance.rate = 0.9;
-        window.speechSynthesis.speak(utterance);
+      if (data.ended) {
+        setEnded(true);
+        setShowJudgment(true); // 최대 턴 도달 등으로 자동 종료되면 바로 판단 요청
       }
-    }, 1200);
+    } catch (err) {
+      console.error("[Simulation] 턴 처리 실패:", err);
+      setError(describeError(err));
+    } finally {
+      setWaiting(false);
+    }
   };
 
   const handleUrlClick = () => {
-    setShowSmishingWarning(true);
+    // 링크 클릭 자체도 하나의 '행동'이라 서버에 전달해 판정받음
+    handleUserResponse("(문자 속 링크를 클릭했습니다)");
   };
 
   const handleMicToggle = () => {
-    if (isMuted) return; // 음소거 상태에선 말하기 버튼 무시
+    if (isMuted || waiting || ended) return;
 
     if (isListening) {
       setIsListening(false);
     } else {
       setIsListening(true);
+      // ⚠️ STT 미연동 상태. 실제 음성 인식 대신 고정 문장을 보냄 (임시)
       setTimeout(() => {
         setIsListening(false);
-        handleUserResponse("제가 무슨 범죄 사건에 연루되었다는 건가요?");
-      }, 1800);
+        handleUserResponse("무슨 일인지 다시 설명해주시겠어요?");
+      }, 1500);
     }
   };
 
-  const handleFinish = () => {
+  // ───────── 판단 제출 → 채점·진단 ─────────
+  const handleSubmitJudgment = async (isScamGuess) => {
+    if (!sessionId || judging) return;
+    setJudging(true);
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 
-    // Report 페이지에서 나중에 "대화 기록 토글"로 보여줄 수 있도록 저장해둠.
-    // 지금 화면엔 안 보이지만, 데이터는 여기서 미리 남겨두는 것.
-    localStorage.setItem("lastSimulationTranscript", JSON.stringify(chatHistory));
-
-    navigate("/report-loading");
+    try {
+      const report = await submitJudgment(sessionId, isScamGuess);
+      navigate("/report-loading", { state: { report } });
+    } catch (err) {
+      console.error("[Simulation] 판단 제출 실패:", err);
+      setJudging(false);
+      setShowJudgment(false);
+      setError(describeError(err));
+    }
   };
+
+  // ───────── 화면 ─────────
+  const containerClass =
+    "w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] sm:max-h-[844px] bg-white shadow-xl rounded-none sm:rounded-3xl border-0 sm:border border-gray-200 flex flex-col justify-between p-5 relative overflow-y-auto";
+
+  // 훈련 시작 중
+  if (starting) {
+    return (
+      <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
+        <div className={containerClass}>
+          <div className="flex-1 flex flex-col items-center justify-center text-center">
+            <div className="w-14 h-14 border-4 border-blue-100 border-t-[#0052CC] rounded-full animate-spin mb-5"></div>
+            <p className="text-sm font-bold text-[#191F28]">훈련을 준비하고 있어요</p>
+            <p className="text-[11px] text-[#8B95A1] mt-1.5">잠시만 기다려 주세요...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 시작 자체가 실패한 경우
+  if (error && !sessionId) {
+    return (
+      <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
+        <div className={containerClass}>
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
+            <span className="text-3xl mb-3">⚠️</span>
+            <p className="text-sm font-bold text-[#191F28] mb-2">훈련을 시작할 수 없어요</p>
+            <p className="text-[11px] text-[#8B95A1] leading-relaxed break-keep mb-6">{error.text}</p>
+
+            <div className="w-full space-y-2">
+              {error.action === "report" ? (
+                <button
+                  onClick={() => navigate("/report")}
+                  className="w-full bg-[#0052CC] text-white py-3 rounded-xl text-xs font-bold hover:bg-blue-700 transition"
+                >
+                  결과 리포트 보기
+                </button>
+              ) : (
+                <button
+                  onClick={() => window.location.reload()}
+                  className="w-full bg-[#0052CC] text-white py-3 rounded-xl text-xs font-bold hover:bg-blue-700 transition"
+                >
+                  다시 시도하기
+                </button>
+              )}
+              <button
+                onClick={() => navigate("/type-select")}
+                className="w-full bg-[#F8F9FA] text-[#8B95A1] border border-gray-200 py-2.5 rounded-xl text-xs font-semibold hover:bg-gray-100 transition"
+              >
+                유형 다시 선택하기
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
-      <div className="w-full max-w-[393px] h-[100dvh] sm:h-auto sm:min-h-[780px] sm:max-h-[844px] bg-white shadow-xl rounded-none sm:rounded-3xl border-0 sm:border border-gray-200 flex flex-col justify-between p-5 relative overflow-y-auto">
+      <div className={containerClass}>
 
         <div className="flex-1 flex flex-col">
           <PageHeader padding="pt-1 pb-3 mb-2" bordered rightContent={<LiveBadge />} />
 
-          {/* ───────────── 음성(전화) 모드: 실제 통화 화면 ───────────── */}
+          {/* ───────── 음성(전화) 모드 ───────── */}
           {category === "voice" && (
             <div className="flex-1 flex flex-col items-center justify-center text-center py-4">
-              <div className="w-24 h-24 bg-blue-50 border border-blue-100 rounded-full flex items-center justify-center text-blue-600 mb-5 shadow-inner">
+              <div className="w-24 h-24 bg-gray-100 border border-gray-200 rounded-full flex items-center justify-center text-gray-500 mb-5 shadow-inner">
                 <svg className="w-11 h-11 fill-none stroke-current stroke-1.5" viewBox="0 0 24 24">
-                  <path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 1-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5m0 0v-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5m-4 0h4"/>
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
                 </svg>
               </div>
               <h2 className="text-xl font-extrabold text-[#191F28] mb-1.5 tracking-tight">
-                {scenarioInfo.caller}
+                알 수 없는 번호
               </h2>
-              <p className="text-xs font-semibold text-[#8B95A1] mb-4">{scenarioInfo.subInfo}</p>
+              <p className="text-xs font-semibold text-[#8B95A1] mb-4">발신자 정보 없음</p>
               <div className="flex items-center space-x-1.5">
                 <span className="text-base font-mono font-bold text-[#0052CC]">{formatCallTime(callSeconds)}</span>
-                <span className="text-[11px] text-gray-400">통화 중</span>
+                <span className="text-[11px] text-gray-400">{waiting ? "말하는 중..." : "통화 중"}</span>
               </div>
+              {maxTurns && (
+                <p className="text-[10px] text-gray-400 mt-3">대화 {turnNo} / {maxTurns}</p>
+              )}
             </div>
           )}
 
-          {/* ───────────── 문자(스미싱) 모드: 기존 그대로 유지 ───────────── */}
+          {/* ───────── 문자(스미싱) 모드 ───────── */}
           {category === "smishing" && (
-            <div>
+            <div className="flex-1 flex flex-col">
               <div className="bg-[#F8F9FA] rounded-xl p-3 border border-gray-100 flex items-center space-x-2.5 mb-4">
-                <div className="w-8 h-8 bg-green-500 text-white rounded-full flex items-center justify-center font-bold text-xs">
+                <div className="w-8 h-8 bg-gray-300 text-white rounded-full flex items-center justify-center font-bold text-xs">
                   💬
                 </div>
                 <div>
-                  <span className="text-xs font-bold text-[#191F28] block">{scenarioInfo.caller}</span>
-                  <span className="text-[10px] text-[#8B95A1]">{scenarioInfo.subInfo}</span>
+                  <span className="text-xs font-bold text-[#191F28] block">알 수 없는 발신번호</span>
+                  <span className="text-[10px] text-[#8B95A1]">발신자 정보 없음</span>
                 </div>
               </div>
 
@@ -232,48 +342,116 @@ export default function Simulation() {
                         ? "bg-[#0052CC] text-white rounded-br-none"
                         : "bg-gray-100 text-[#191F28] border border-gray-200 rounded-bl-none"
                     }`}>
-                      <p>{item.text}</p>
-                      {item.url && (
+                      <p className="whitespace-pre-wrap">{item.text}</p>
+                      {item.sender === "bot" && /https?:\/\/\S+/.test(item.text) && (
                         <button
                           onClick={handleUrlClick}
-                          className="text-[#0052CC] font-bold underline block mt-2 hover:opacity-80 transition"
+                          disabled={waiting || ended}
+                          className="text-[#0052CC] font-bold underline block mt-2 hover:opacity-80 transition disabled:opacity-40"
                         >
-                          {item.url}
+                          링크 열기
                         </button>
                       )}
                     </div>
                   </div>
                 ))}
+
+                {waiting && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 border border-gray-200 rounded-2xl rounded-bl-none px-4 py-3">
+                      <span className="text-xs text-gray-400">입력 중...</span>
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
               </div>
+
+              {maxTurns && (
+                <p className="text-[10px] text-gray-400 text-center mt-2">대화 {turnNo} / {maxTurns}</p>
+              )}
             </div>
           )}
         </div>
 
-        {showSmishingWarning && (
+        {/* 턴 처리 중 발생한 오류 (대화는 계속 가능) */}
+        {error && sessionId && (
+          <div className="mb-2 bg-red-50 border border-red-200 rounded-xl p-3 flex items-start justify-between gap-2">
+            <p className="text-[11px] text-red-700 leading-relaxed break-keep">{error.text}</p>
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600 text-xs shrink-0">
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* 위험 행동 즉시 개입 팝업 */}
+        {riskWarning && (
           <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex justify-center items-center p-4 z-30 animate-fade-in">
             <div className="bg-white rounded-2xl p-5 text-center max-w-[320px] border border-red-100 shadow-2xl">
               <span className="text-3xl mb-2 block">🚨</span>
-              <h3 className="text-sm font-extrabold text-[#191F28] mb-1.5">
-                악의적 피싱 링크 감지!
-              </h3>
+              <h3 className="text-sm font-extrabold text-[#191F28] mb-1.5">잠깐, 위험한 행동이에요!</h3>
               <p className="text-xs text-gray-600 leading-relaxed mb-4 break-keep">
-                방금 클릭한 URL은 출처가 불분명한 <span className="text-red-500 font-bold">스미싱 피싱 링크</span>입니다. 실제 상황이라면 악성 앱이 설치되거나 개인정보가 유출될 위험이 있습니다.
+                {riskWarning.message}
               </p>
               <button
-                onClick={() => setShowSmishingWarning(false)}
-                className="w-full bg-[#0052CC] text-[#ffffff] py-2.5 rounded-xl text-xs font-bold hover:bg-blue-700 transition"
+                onClick={() => setRiskWarning(null)}
+                className="w-full bg-[#0052CC] text-white py-2.5 rounded-xl text-xs font-bold hover:bg-blue-700 transition"
               >
-                확인하고 대화 계속하기
+                확인하고 계속하기
               </button>
             </div>
           </div>
         )}
 
-        {/* ───────────── 하단 컨트롤 ───────────── */}
+        {/* 판단 제출 모달 */}
+        {showJudgment && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex justify-center items-center p-5 z-40 animate-fade-in">
+            <div className="bg-white rounded-3xl p-6 text-center max-w-[320px] shadow-2xl border border-gray-100">
+              <div className="w-12 h-12 bg-blue-50 text-[#0052CC] rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-3">
+                🤔
+              </div>
+              <h3 className="text-base font-extrabold text-[#191F28] mb-2">이 연락, 어떻게 보셨나요?</h3>
+              <p className="text-xs text-gray-600 leading-relaxed break-keep mb-5">
+                방금 나눈 대화가 <b className="text-red-500">사기</b>였다고 생각하시나요,<br />
+                아니면 <b className="text-[#0052CC]">정상적인 연락</b>이었다고 보시나요?
+              </p>
+
+              {judging ? (
+                <div className="py-4">
+                  <div className="w-8 h-8 border-4 border-blue-100 border-t-[#0052CC] rounded-full animate-spin mx-auto mb-3"></div>
+                  <p className="text-[11px] text-[#8B95A1]">결과를 분석하고 있어요...</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleSubmitJudgment(true)}
+                    className="w-full bg-red-500 text-white py-3.5 rounded-xl text-xs font-bold hover:bg-red-600 transition"
+                  >
+                    🚨 사기인 것 같아요 (신고)
+                  </button>
+                  <button
+                    onClick={() => handleSubmitJudgment(false)}
+                    className="w-full bg-[#0052CC] text-white py-3.5 rounded-xl text-xs font-bold hover:bg-blue-700 transition"
+                  >
+                    ✅ 정상적인 연락 같아요
+                  </button>
+                  {!ended && (
+                    <button
+                      onClick={() => setShowJudgment(false)}
+                      className="w-full bg-[#F8F9FA] text-[#8B95A1] border border-gray-200 py-2.5 rounded-xl text-xs font-semibold hover:bg-gray-100 transition"
+                    >
+                      좀 더 대화해볼게요
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ───────── 하단 컨트롤 ───────── */}
         <div className="pt-3 border-t border-gray-100">
           {category === "voice" ? (
             <div className="flex flex-col items-center gap-4 mb-1">
-              {/* 음소거 · 말하기 · 스피커 3버튼 (실제 통화 화면 스타일) */}
               <div className="flex items-center justify-center gap-6">
                 <CallToggleButton active={isMuted} onClick={() => setIsMuted((m) => !m)} label="음소거">
                   <svg className="w-5 h-5 fill-none stroke-current stroke-2" viewBox="0 0 24 24">
@@ -289,10 +467,10 @@ export default function Simulation() {
                 <div className="flex flex-col items-center">
                   <button
                     onClick={handleMicToggle}
-                    disabled={isMuted}
+                    disabled={isMuted || waiting || ended}
                     aria-label="말하기"
                     className={`w-16 h-16 rounded-full flex items-center justify-center transition active:scale-95 shadow-md ${
-                      isMuted
+                      isMuted || waiting || ended
                         ? "bg-gray-200 text-gray-400 cursor-not-allowed"
                         : isListening
                         ? "bg-red-500 text-white shadow-red-500/30 animate-pulse"
@@ -319,12 +497,19 @@ export default function Simulation() {
               </div>
 
               <p className="text-[10px] text-[#8B95A1]">
-                {isMuted ? "음소거 중이에요" : isListening ? "답변을 인식하고 있어요..." : "마이크를 눌러 답변해보세요"}
+                {waiting
+                  ? "상대방이 말하고 있어요..."
+                  : ended
+                  ? "통화가 종료되었어요"
+                  : isMuted
+                  ? "음소거 중이에요"
+                  : isListening
+                  ? "답변을 인식하고 있어요..."
+                  : "마이크를 눌러 답변해보세요"}
               </p>
 
-              {/* 통화 종료 버튼 */}
               <button
-                onClick={handleFinish}
+                onClick={() => setShowJudgment(true)}
                 aria-label="통화 종료"
                 className="w-14 h-14 bg-red-500 text-white rounded-full flex items-center justify-center shadow-lg shadow-red-500/30 hover:bg-red-600 transition active:scale-95"
               >
@@ -341,22 +526,25 @@ export default function Simulation() {
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleUserResponse(inputText)}
-                  placeholder="답장 메시지를 입력하세요..."
-                  className="flex-1 p-2.5 rounded-xl border border-gray-200 text-xs focus:border-[#0052CC] focus:outline-none"
+                  maxLength={MAX_INPUT_CHARS}
+                  disabled={waiting || ended}
+                  placeholder={ended ? "대화가 종료되었어요" : "답장 메시지를 입력하세요..."}
+                  className="flex-1 p-2.5 rounded-xl border border-gray-200 text-xs focus:border-[#0052CC] focus:outline-none disabled:bg-gray-50"
                 />
                 <button
                   onClick={() => handleUserResponse(inputText)}
-                  className="bg-[#0052CC] text-white px-3.5 py-2.5 rounded-xl text-xs font-bold hover:bg-blue-700 transition"
+                  disabled={waiting || ended || !inputText.trim()}
+                  className="bg-[#0052CC] text-white px-3.5 py-2.5 rounded-xl text-xs font-bold hover:bg-blue-700 transition disabled:bg-gray-200 disabled:text-gray-400"
                 >
-                  전송
+                  {waiting ? "..." : "전송"}
                 </button>
               </div>
 
               <button
-                onClick={handleFinish}
+                onClick={() => setShowJudgment(true)}
                 className="w-full bg-[#0052CC] text-white py-3.5 rounded-xl text-xs sm:text-sm font-bold shadow-md shadow-blue-500/20 hover:bg-blue-700 transition active:scale-[0.99]"
               >
-                체험 종료하고 분석 리포트 확인하기 →
+                체험 종료하고 판단하기 →
               </button>
             </>
           )}

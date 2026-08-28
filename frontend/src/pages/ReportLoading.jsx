@@ -1,21 +1,29 @@
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
-// 지금은 실제 분석 API가 없어서 정해진 시간만 기다렸다가 Report로 넘어감.
-// 나중에 백엔드 리포트 생성 API가 생기면, SurveyLoading이 fetchRecommendation을
-// 부르는 것과 같은 방식으로 여기서 실제 API를 호출하도록 바꾸면 됨.
-const MIN_LOADING_MS = 1800;
+// 판단(POST /judgment) API가 채점·진단까지 한 번에 처리하므로,
+// 여기서 별도 API를 부르지 않고 Simulation이 넘겨준 결과를 그대로 Report로 전달함.
+// 최소 시간을 두는 건, 결과가 즉시 도착해도 화면이 번쩍이지 않게 하려는 연출용.
+const MIN_LOADING_MS = 900;
 
 export default function ReportLoading() {
   const navigate = useNavigate();
+  const { state } = useLocation();
 
   useEffect(() => {
+    const report = state?.report;
+
     const timer = setTimeout(() => {
-      navigate("/report", { replace: true });
+      if (report) {
+        navigate("/report", { state: { report }, replace: true });
+      } else {
+        // 판단을 거치지 않고 직접 들어온 경우 (새로고침 등) → 훈련 선택으로 되돌림
+        navigate("/type-select", { replace: true });
+      }
     }, MIN_LOADING_MS);
 
     return () => clearTimeout(timer);
-  }, [navigate]);
+  }, [state, navigate]);
 
   return (
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">

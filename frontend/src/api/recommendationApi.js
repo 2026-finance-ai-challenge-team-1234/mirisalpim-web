@@ -1,8 +1,11 @@
 // src/api/recommendationApi.js
 //
 // P-02 추천 API 호출 헬퍼.
-// 실제 백엔드가 아직 없거나 호출이 실패하면 자동으로 목업 데이터로 대체합니다.
-// 백엔드가 준비되면 이 파일은 손댈 필요 없이 자동으로 실제 데이터를 씁니다.
+//
+// 목업 폴백 정책:
+// - 개발 환경(import.meta.env.DEV)에서만 목업으로 대체함. 운영 빌드에서는 에러를 그대로 던져서
+//   백엔드 장애가 조용히 감춰지지 않게 함.
+// - 목업으로 대체된 경우 결과에 __isMock: true 를 붙여, 화면에서 배지를 띄울 수 있게 함.
 
 import { apiPost } from "./client";
 
@@ -10,8 +13,9 @@ export async function fetchRecommendation(surveyAnswers) {
   try {
     return await apiPost("/recommendations", surveyAnswers);
   } catch (err) {
+    if (!import.meta.env.DEV) throw err; // 운영에서는 실패를 감추지 않음
     console.warn("[recommendationApi] 백엔드 호출 실패, 목업 데이터로 대체합니다:", err.message);
-    return mockRecommendation(surveyAnswers);
+    return { ...mockRecommendation(surveyAnswers), __isMock: true };
   }
 }
 
