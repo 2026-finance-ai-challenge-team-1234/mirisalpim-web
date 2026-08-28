@@ -16,6 +16,11 @@ urlpatterns = [
         name="submit-turn",
     ),
     path(
+        "training-sessions/<uuid:session_id>/turns/audio",
+        views.submit_turn_audio,
+        name="submit-turn-audio",
+    ),
+    path(
         "training-sessions/<uuid:session_id>/turns/stream",
         views.turn_stream,
         name="turn-stream",
