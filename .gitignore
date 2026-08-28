@@ -20,3 +20,13 @@ ai_core/eval/results/
 
 # 음성 POC 세션 로그 + 녹음 원본 (poc/voice_chat.py) — 실행마다 생성됨.
 poc/results/
+
+# 로컬 개발 잔여물 — 이 프로젝트는 PostgreSQL 을 쓴다. sqlite 파일이 생겼다면
+# DATABASE_URL 없이 manage.py 를 돌린 흔적이고, 안에 훈련 대화가 남는다
+# (기획서 10절: 대화 원문은 세션 종료 시 파기).
+backend/db.sqlite3
+
+# 프론트는 frontend/ 안에서 관리한다. 저장소 최상위에 lock 파일이 생겼다면
+# 루트에서 npm 을 잘못 돌린 것이다.
+/package-lock.json
+/node_modules/
