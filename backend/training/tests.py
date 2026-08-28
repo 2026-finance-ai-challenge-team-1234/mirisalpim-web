@@ -27,8 +27,16 @@ from .engine_state import load_state, save_state
 from .grading import ACTION_API_NAMES, first_detectable_turn, grade
 from .models import RiskyAction, Scenario, Session, Stage, TellPoint
 from .throttle import TURN_RATE_LIMIT, TURN_RATE_WINDOW_SECONDS
+from .voice import VoiceUnavailable
 from .selection import SELECTION_KEY
-from .views import ANON_CLIENT_ID_KEY, ConcurrentTurnError, _commit_turn
+from .views import (
+    ANON_CLIENT_ID_KEY,
+    MAX_AUDIO_BYTES,
+    MAX_INPUT_CHARS,
+    ConcurrentTurnError,
+    _commit_turn,
+    _voice_audio,
+)
 
 
 class BootstrapTests(TestCase):
@@ -495,7 +503,8 @@ class StartTrainingTests(TestCase):
         self.assertEqual(response.status_code, 201)
         payload = response.json()
         self.assertEqual(
-            set(payload), {"sessionId", "category", "maxTurns", "turnNo", "opening"}
+            set(payload),
+            {"sessionId", "category", "maxTurns", "turnNo", "opening", "openingAudio"},
         )
         self.assertEqual(payload["turnNo"], 1)
         self.assertTrue(payload["opening"])
@@ -646,7 +655,7 @@ class SubmitTurnTests(TestCase):
         payload = response.json()
         self.assertEqual(
             set(payload),
-            {"turnNo", "scammerText", "riskWarnings", "ended", "endReason"},
+            {"turnNo", "scammerText", "scammerAudio", "riskWarnings", "ended", "endReason"},
         )
         self.assertEqual(payload["scammerText"], "가상 사기범 응답입니다.")
         session = Session.objects.get(pk=session_id)
@@ -1920,3 +1929,152 @@ class ReportSourceTests(TestCase):
 
         self.assertNotIn("source", payload)
         self.assertNotIn("sourceRefs", payload)
+
+
+class VoiceTurnTests(TestCase):
+    """음성 턴 — Chirp 호출은 전부 가짜로 대체한다 (요금·자격증명 불필요)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+        # 훈련 시작 응답의 openingAudio 합성도 막는다
+        patcher = patch("training.views.synthesize_b64", return_value="ZmFrZQ==")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def start(self, track="T01-1", category="voice"):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": category, "trackId": track},
+            content_type="application/json",
+        )
+        return self.client.post("/api/v1/training-sessions").json()
+
+    def send_audio(self, session_id, heard, audio=b"fake-webm-bytes", **params):
+        query = "?" + "&".join(f"{k}={v}" for k, v in params.items()) if params else ""
+        with patch("training.views.transcribe", return_value=heard):
+            with patch(
+                "training.views.step",
+                side_effect=lambda e, t, **kw: fake_step(e, t),
+            ):
+                return self.client.post(
+                    f"/api/v1/training-sessions/{session_id}/turns/audio{query}",
+                    data=audio,
+                    content_type="audio/webm",
+                )
+
+    def test_opening_carries_audio_for_voice(self):
+        payload = self.start()
+
+        self.assertEqual(payload["openingAudio"], "ZmFrZQ==")
+
+    def test_audio_turn_returns_what_the_user_said(self):
+        session_id = self.start()["sessionId"]
+
+        payload = self.send_audio(session_id, "저 그런 적 없는데요").json()
+
+        self.assertEqual(payload["userText"], "저 그런 적 없는데요")
+        self.assertEqual(
+            set(payload),
+            {"userText", "turnNo", "scammerText", "scammerAudio",
+             "riskWarnings", "ended", "endReason"},
+        )
+
+    def test_audio_turn_persists_the_recognised_text(self):
+        session_id = self.start()["sessionId"]
+
+        self.send_audio(session_id, "저 그런 적 없는데요")
+
+        stored = Session.objects.get(pk=session_id).turns.filter(role="user").first()
+        self.assertEqual(stored.text, "저 그런 적 없는데요")
+
+    def test_pii_in_speech_is_masked_everywhere(self):
+        """말로 한 주민번호도 마스킹된다 - 화면·DB 어디에도 원문이 남지 않는다."""
+        session_id = self.start()["sessionId"]
+
+        payload = self.send_audio(
+            session_id, "제 주민번호는 900101-1234567입니다"
+        ).json()
+
+        self.assertNotIn("900101-1234567", payload["userText"])
+        self.assertIn("[주민등록번호]", payload["userText"])
+        stored = Session.objects.get(pk=session_id).turns.filter(role="user").first()
+        self.assertNotIn("900101-1234567", stored.text)
+        self.assertEqual(payload["riskWarnings"][0]["type"], "personalInfo")
+
+    def test_silence_is_rejected_before_the_model_runs(self):
+        session_id = self.start()["sessionId"]
+
+        response = self.send_audio(session_id, "   ")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "NO_SPEECH_DETECTED")
+        self.assertEqual(Session.objects.get(pk=session_id).turn, 1)
+
+    def test_empty_body_is_rejected(self):
+        session_id = self.start()["sessionId"]
+
+        response = self.send_audio(session_id, "안녕", audio=b"")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "EMPTY_AUDIO")
+
+    def test_oversized_audio_is_rejected(self):
+        session_id = self.start()["sessionId"]
+
+        response = self.send_audio(session_id, "안녕", audio=b"x" * (MAX_AUDIO_BYTES + 1))
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json()["error"]["code"], "AUDIO_TOO_LARGE")
+
+    def test_long_speech_is_trimmed_to_the_input_limit(self):
+        session_id = self.start()["sessionId"]
+
+        payload = self.send_audio(session_id, "가" * 500).json()
+
+        self.assertEqual(len(payload["userText"]), MAX_INPUT_CHARS)
+
+    def test_missing_credentials_becomes_503(self):
+        session_id = self.start()["sessionId"]
+
+        with patch("training.views.transcribe", side_effect=VoiceUnavailable("no creds")):
+            response = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/turns/audio",
+                data=b"fake", content_type="audio/webm",
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "VOICE_UNAVAILABLE")
+
+    def test_another_anonymous_client_gets_404(self):
+        session_id = self.start()["sessionId"]
+        other = Client()
+        other.get("/api/v1/bootstrap")
+
+        with patch("training.views.transcribe", return_value="안녕하세요"):
+            response = other.post(
+                f"/api/v1/training-sessions/{session_id}/turns/audio",
+                data=b"fake", content_type="audio/webm",
+            )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_smishing_sessions_get_no_audio(self):
+        """문자 대화에 음성을 합성할 이유가 없다 (비용·지연)."""
+        scenario = load_scenario("sc-01")
+        scenario.category = "smishing"
+
+        self.assertIsNone(_voice_audio(scenario, "안녕하세요"))
+
+    def test_voice_sessions_use_the_persona_preset(self):
+        """시나리오 카드의 voice_preset 이 화자 선택에 쓰인다."""
+        scenario = load_scenario("sc-01")
+
+        with patch("training.views.synthesize_b64") as fake:
+            _voice_audio(scenario, "안녕하세요")
+
+        fake.assert_called_once_with("안녕하세요", scenario.persona.voice_preset)

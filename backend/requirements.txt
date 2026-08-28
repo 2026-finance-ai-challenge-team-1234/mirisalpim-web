@@ -13,4 +13,9 @@ whitenoise==6.12.0
 # ai_core (Django 비의존, 이 프로세스가 import 해서 씀)
 anthropic>=0.121.0
 google-genai>=1.0.0
+
+# Chirp 음성 (backend/training/voice.py). 데스크톱 재생용 sounddevice/soundfile 은
+# 넣지 않는다 - 서버는 오디오 바이트만 만들고 재생은 브라우저가 한다.
+google-cloud-speech>=2.27.0
+google-cloud-texttospeech>=2.17.0
 httpx>=0.27
