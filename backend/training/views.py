@@ -765,8 +765,10 @@ def _commit_turn_in_worker(session_id, anon_client_id, loaded_turn, state, outco
     요청이 끝나도 아무도 닫아주지 않아 프로세스가 살아 있는 동안 남는다
     (테스트에서는 그 커넥션이 DROP DATABASE 를 막아 teardown 이 실패한다).
 
-    Django 기본값이 CONN_MAX_AGE=0 이라 매 요청 끝에 커넥션을 닫으므로,
-    여기서 닫는 것도 같은 동작이다.
+    이 프로젝트는 CONN_MAX_AGE=600 이라 커넥션이 요청 사이에도 살아 있다.
+    Django 가 관리하는 요청 스레드는 그 수명을 알아서 다루지만, 여기 executor
+    스레드는 요청 수명주기 밖이라 아무도 정리해 주지 않는다. 그래서 더더욱
+    직접 닫아야 한다.
     """
     try:
         _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome)
