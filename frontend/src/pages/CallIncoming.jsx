@@ -51,18 +51,22 @@ export default function CallIncoming() {
           </div>
 
           {/* Caller Information Area */}
+          {/* ⚠️ 발신자 정보는 절대 구체적으로 노출하면 안 됨.
+              시나리오 중 일부는 정상 상황이라, 여기서 기관명을 보여주면 사기 여부가 미리 드러남.
+              실제 보이스피싱도 발신자가 특정되지 않은 채로 걸려오므로 이게 더 현실적임. */}
           <div className="flex flex-col items-center text-center mt-4">
-            <div className="w-20 h-20 bg-blue-50 border border-blue-100 rounded-full flex items-center justify-center text-blue-600 mb-5 shadow-inner">
+            <div className="w-20 h-20 bg-gray-100 border border-gray-200 rounded-full flex items-center justify-center text-gray-500 mb-5 shadow-inner">
               <svg className="w-10 h-10 fill-none stroke-current stroke-1.5" viewBox="0 0 24 24">
-                <path d="M19 21V5a2 2 0 0 0-2-2H7a2 2 0 0 1-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5m0 0v-5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5m-4 0h4"/>
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
               </svg>
             </div>
 
             <h2 className="text-xl font-extrabold text-[#191F28] mb-1.5 tracking-tight">
-              서울중앙지검 검찰청
+              알 수 없는 번호
             </h2>
             <p className="text-xs font-semibold text-[#8B95A1] mb-6">
-              02-1234-5678 • 이상 거래 감지팀
+              발신자 정보 없음
             </p>
 
             <div className="flex items-center space-x-1.5 text-xs font-bold text-[#0052CC] bg-blue-50/80 px-3 py-1.5 rounded-lg">

@@ -3,6 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { fetchAllScenarios } from "../api/scenarioApi";
 import PageHeader from "../components/PageHeader";
 
+// 백엔드가 available: false로 주는 소분류는 아직 시나리오가 적재되지 않아 훈련 불가.
+// (서버도 클라이언트를 믿지 않고 재검사해서, 시작하면 409 SCENARIO_NOT_AVAILABLE이 남)
+// 백엔드 응답에 available이 아예 없는 옛 목업 데이터는 true로 간주함.
+const isAvailable = (item) => item.available !== false;
+
 export default function CategorySelect() {
   const navigate = useNavigate();
 
@@ -62,6 +67,9 @@ export default function CategorySelect() {
       : scenarios.smishing
     : [];
   const currentGroupObj = currentCategoryList.find((g) => g.id === selectedSubGroup);
+
+  // 중분류 안에 훈련 가능한 소분류가 몇 개인지 (0개면 들어가도 고를 게 없음)
+  const availableCountOf = (cat) => (cat.subItems || []).filter(isAvailable).length;
 
   if (!scenarios) {
     return (
@@ -156,25 +164,45 @@ export default function CategorySelect() {
 
           {step === 2 && (
             <div className="space-y-3 animate-fade-in max-h-[460px] overflow-y-auto pr-1">
-              {currentCategoryList.map((cat) => (
-                <div
-                  key={cat.id}
-                  onClick={() => handleSelectSubGroup(cat.id)}
-                  className="p-3.5 rounded-2xl border-2 border-transparent bg-[#F8F9FA] hover:border-[#0052CC] hover:bg-blue-50/30 transition cursor-pointer"
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <h3 className="text-xs sm:text-sm font-extrabold text-[#191F28]">
-                      {cat.title}
-                    </h3>
-                    <span className="text-[10px] font-bold text-[#0052CC] bg-blue-50 px-2 py-0.5 rounded-md">
-                      {cat.badge}
-                    </span>
+              {currentCategoryList.map((cat) => {
+                const availableCount = availableCountOf(cat);
+                const groupDisabled = availableCount === 0;
+
+                return (
+                  <div
+                    key={cat.id}
+                    onClick={() => !groupDisabled && handleSelectSubGroup(cat.id)}
+                    className={`p-3.5 rounded-2xl border-2 transition ${
+                      groupDisabled
+                        ? "bg-gray-50 border-transparent opacity-50 cursor-not-allowed"
+                        : "bg-[#F8F9FA] border-transparent hover:border-[#0052CC] hover:bg-blue-50/30 cursor-pointer"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <h3 className="text-xs sm:text-sm font-extrabold text-[#191F28]">
+                        {cat.title}
+                      </h3>
+                      {groupDisabled ? (
+                        <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-md shrink-0">
+                          준비 중
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold text-[#0052CC] bg-blue-50 px-2 py-0.5 rounded-md shrink-0">
+                          {cat.badge}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[#8B95A1] leading-relaxed break-keep">
+                      {cat.desc}
+                    </p>
+                    {!groupDisabled && (
+                      <p className="text-[10px] text-[#0052CC] font-semibold mt-1.5">
+                        체험 가능한 시나리오 {availableCount}개
+                      </p>
+                    )}
                   </div>
-                  <p className="text-[11px] text-[#8B95A1] leading-relaxed break-keep">
-                    {cat.desc}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -186,27 +214,39 @@ export default function CategorySelect() {
               </div>
 
               {currentGroupObj.subItems.map((item) => {
+                const available = isAvailable(item);
                 const isSelected = selectedTrack?.id === item.id;
+
                 return (
                   <div
                     key={item.id}
-                    onClick={() => setSelectedTrack(item)}
-                    className={`p-3 rounded-xl border-2 transition-all cursor-pointer flex justify-between items-center ${
-                      isSelected
-                        ? "bg-blue-50/60 border-[#0052CC] shadow-2xs"
-                        : "bg-[#F8F9FA] border-gray-100 hover:border-gray-200"
+                    onClick={() => available && setSelectedTrack(item)}
+                    className={`p-3 rounded-xl border-2 transition-all flex justify-between items-center ${
+                      !available
+                        ? "bg-gray-50 border-gray-100 opacity-50 cursor-not-allowed"
+                        : isSelected
+                        ? "bg-blue-50/60 border-[#0052CC] shadow-2xs cursor-pointer"
+                        : "bg-[#F8F9FA] border-gray-100 hover:border-gray-200 cursor-pointer"
                     }`}
                   >
-                    <div className="flex items-center space-x-2">
-                      <span className="text-[10px] font-bold text-gray-400 font-mono">
+                    <div className="flex items-center space-x-2 min-w-0">
+                      <span className="text-[10px] font-bold text-gray-400 font-mono shrink-0">
                         {item.id}
                       </span>
-                      <span className="text-xs font-bold text-[#191F28]">
+                      <span className={`text-xs font-bold truncate ${available ? "text-[#191F28]" : "text-gray-400"}`}>
                         {item.name}
                       </span>
                     </div>
-                    <span className={`text-xs shrink-0 ${isSelected ? "text-[#0052CC] font-extrabold" : "text-gray-300"}`}>
-                      {isSelected ? "✓ 선택됨" : "선택"}
+                    <span
+                      className={`text-xs shrink-0 ml-2 ${
+                        !available
+                          ? "text-gray-400 font-semibold"
+                          : isSelected
+                          ? "text-[#0052CC] font-extrabold"
+                          : "text-gray-300"
+                      }`}
+                    >
+                      {!available ? "준비 중" : isSelected ? "✓ 선택됨" : "선택"}
                     </span>
                   </div>
                 );
