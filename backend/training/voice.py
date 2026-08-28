@@ -21,6 +21,7 @@ import json
 import logging
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from google.api_core.client_options import ClientOptions
 from google.cloud import texttospeech
@@ -66,9 +67,14 @@ def _credentials_info():
             raise VoiceUnavailable("GCP_CREDENTIALS_JSON 이 올바른 JSON 이 아닙니다") from exc
 
     path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    if path and os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+    if path:
+        # 상대 경로는 저장소 루트 기준으로 푼다. Django 는 backend/ 에서 돌아서
+        # ".gcp-credentials.json" 같은 값을 그대로 열면 못 찾는다.
+        resolved = Path(path)
+        if not resolved.is_absolute():
+            resolved = Path(__file__).resolve().parents[2] / path
+        if resolved.exists():
+            return json.loads(resolved.read_text(encoding="utf-8"))
 
     raise VoiceUnavailable(
         "음성 기능에 GCP 자격증명이 필요합니다 "
