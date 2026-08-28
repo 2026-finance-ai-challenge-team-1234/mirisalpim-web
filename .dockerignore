@@ -1,6 +1,8 @@
 .git
 .github
 **/.env
+**/.gcp-credentials.json
+**/gcp-credentials.json
 **/.venv
 **/__pycache__
 **/*.pyc

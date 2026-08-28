@@ -44,4 +44,4 @@ RUN SECRET_KEY=build-only-not-for-runtime \
 # ⚠️ seed 실패가 기동을 막지 않게 한다. 진행됐던 세션의 Turn 이 Stage 를 PROTECT 로
 # 참조하고 있으면 seed_scenarios 가 단계를 교체하지 못하고 CommandError 를 낸다.
 # 그때 서비스 전체가 못 뜨는 것보다 기존 시나리오로 뜨는 편이 낫다.
-CMD ["/bin/sh", "-c", "python manage.py migrate --noinput && { python manage.py seed_scenarios || echo 'WARNING: seed_scenarios 실패 - 기존 적재분으로 기동합니다'; } && exec uvicorn config.asgi:application --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["python", "runtime_credentials.py", "/bin/sh", "-c", "python manage.py migrate --noinput && { python manage.py seed_scenarios || echo 'WARNING: seed_scenarios 실패 - 기존 적재분으로 기동합니다'; } && exec uvicorn config.asgi:application --host 0.0.0.0 --port ${PORT:-8000}"]
