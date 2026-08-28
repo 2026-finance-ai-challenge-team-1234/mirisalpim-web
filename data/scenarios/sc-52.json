@@ -120,7 +120,7 @@
       "trigger": "권위·긴급성·관계 신뢰를 이용해 통화를 계속 유지하려 함",
       "why": "외부 확인보다 통화 유지와 즉시 대응을 우선하게 만드는 것은 대표적인 위험 신호입니다.",
       "weight": 2,
-      "first_detectable_turn": 5
+      "first_detectable_turn": 9
     },
     {
       "id": "tp3",
@@ -129,7 +129,7 @@
       "trigger": "개인정보·금융정보·앱 설치·송금 등 민감 행동을 요구하려 함",
       "why": "민감 행동을 전화 지시에 따라 수행하지 말고 통화를 종료한 뒤 공식 채널에서 직접 확인해야 합니다.",
       "weight": 1,
-      "first_detectable_turn": 9
+      "first_detectable_turn": 13
     }
   ],
   "end_conditions": [

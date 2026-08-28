@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "scenario_id": "sc-79",
-  "category": "sms",
+  "category": "smishing",
   "track": "S04-2",
   "target_tracks": [
     "young",
@@ -121,7 +121,7 @@
       "trigger": "문자 내부의 [훈련용 링크]에서 절차를 계속하도록 유도함",
       "why": "문자 내부 링크를 그대로 따라가기보다 공식 앱·홈페이지를 직접 열어 같은 안내가 있는지 확인해야 합니다.",
       "weight": 1,
-      "first_detectable_turn": 3
+      "first_detectable_turn": 5
     },
     {
       "id": "tp3",
