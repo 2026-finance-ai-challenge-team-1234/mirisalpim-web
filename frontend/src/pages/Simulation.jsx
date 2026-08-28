@@ -146,7 +146,7 @@ export default function Simulation() {
       cancelled = true;
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
-     
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 통화 타이머 (음성 모드, 훈련 시작 후에만)
@@ -179,9 +179,13 @@ export default function Simulation() {
         setRiskWarning(data.riskWarnings[0]);
       }
 
-      setChatHistory((prev) => [...prev, { sender: "bot", text: data.scammerText }]);
+      // 최대 턴 도달 등으로 종료될 때는 scammerText가 빈 문자열로 옴 →
+      // 빈 말풍선이 생기지 않도록 내용이 있을 때만 렌더링/재생함
+      if (data.scammerText) {
+        setChatHistory((prev) => [...prev, { sender: "bot", text: data.scammerText }]);
+        if (category === "voice") speakText(data.scammerText);
+      }
       setTurnNo(data.turnNo ?? turnNo + 1);
-      if (category === "voice") speakText(data.scammerText);
 
       if (data.ended) {
         setEnded(true);
