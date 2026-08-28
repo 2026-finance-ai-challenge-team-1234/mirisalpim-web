@@ -338,9 +338,19 @@ def _select_subcategory(category: str, concerns: List[str]) -> str:
 
 
 def _compute_match_percent(scores: Dict[str, int], chosen: str) -> int:
-    total = sum(scores.values()) or 1
-    ratio = scores[chosen] / total
-    return int(min(98, max(88, round(80 + ratio * 30))))
+    """적합도 = 선택된 카테고리가 2위를 얼마나 앞섰는가 (88~98).
+
+    "이 유형이 당신 응답에서 다른 유형들보다 얼마나 뚜렷하게 앞섰는가"를 나타낸다.
+    격차가 0이면 88(간발의 차), 5 이상이면 98(압도적).
+
+    ⚠️ 기존 식은 scores[chosen] / sum(전체 16개) 였다. 16개 카테고리가 점수를
+    나눠 가져서 그 비율(중앙값 0.14)이 88을 넘는 데 필요한 0.283 에 거의 닿지
+    못했고, 결과가 사실상 항상 하한값 88 이었다 (무작위 설문 3000건 중 2999건).
+    min(98, ...) 과 * 30 이 죽은 코드였다.
+    """
+    others = sorted((s for c, s in scores.items() if c != chosen), reverse=True)
+    lead = scores[chosen] - (others[0] if others else 0)
+    return int(min(98, max(88, 88 + min(lead, 5) * 2)))
 
 
 def _build_reasons(scores_snapshot: dict, survey: dict, category: str) -> List[str]:

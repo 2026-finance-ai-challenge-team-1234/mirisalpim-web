@@ -1689,3 +1689,113 @@ class DiagnosisLlmTests(TestCase):
 
         stored = Session.objects.get(pk=session_id).diagnosis.vulnerability_type
         self.assertEqual(len(stored), 30)
+
+
+class StartTrainingWithBodyTests(TestCase):
+    """훈련 시작 시 프론트가 선택을 직접 보내는 경로.
+
+    프론트가 추천 결과를 들고 곧바로 훈련으로 넘어가는 흐름을 위해 body 를 받는다.
+    body 가 없으면 기존처럼 세션에 남은 선택을 쓴다.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def start(self, **body):
+        self.client.get("/api/v1/bootstrap")
+        return self.client.post(
+            "/api/v1/training-sessions",
+            data=body or None,
+            content_type="application/json",
+        )
+
+    def test_body_selection_starts_training_without_user_info(self):
+        response = self.start(category="voice", trackId="T01-1")
+
+        self.assertEqual(response.status_code, 201)
+        session = Session.objects.get(pk=response.json()["sessionId"])
+        self.assertEqual(session.scenario.track, "T01-1")
+
+    def test_body_selection_is_recorded_in_the_session(self):
+        self.start(category="voice", trackId="T05-1")
+
+        self.assertEqual(self.client.session[SELECTION_KEY]["track"], "T05-1")
+
+    def test_entry_path_defaults_to_direct(self):
+        response = self.start(category="voice", trackId="T01-1")
+
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).entry_path, "direct"
+        )
+
+    def test_entry_path_can_be_declared(self):
+        response = self.start(
+            category="voice", trackId="T01-1", entryPath="recommended"
+        )
+
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).entry_path,
+            "recommended",
+        )
+
+    def test_entry_path_is_kept_from_the_recommendation_step(self):
+        """추천을 받은 뒤 그 결과를 body 로 다시 보내도 경로가 direct 로 바뀌지 않는다."""
+        self.client.get("/api/v1/bootstrap")
+        recommended = self.client.post(
+            "/api/v1/recommendations",
+            data={"age": "AGE_60", "concerns": ["CONCERN_01"], "habit": "HABIT_LISTEN"},
+            content_type="application/json",
+        ).json()
+
+        response = self.client.post(
+            "/api/v1/training-sessions",
+            data={"category": recommended["category"], "trackId": recommended["track"]},
+            content_type="application/json",
+        )
+
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).entry_path,
+            "recommended",
+        )
+
+    def test_difficulty_can_be_declared(self):
+        response = self.start(category="voice", trackId="T01-1", difficulty="hard")
+
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).difficulty, "hard"
+        )
+
+    def test_unknown_difficulty_is_rejected(self):
+        response = self.start(category="voice", trackId="T01-1", difficulty="extreme")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_DIFFICULTY")
+
+    def test_track_without_scenario_is_rejected(self):
+        """프론트가 고른 값도 서버가 다시 확인한다."""
+        response = self.start(category="voice", trackId="T06-2")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "SCENARIO_NOT_AVAILABLE")
+
+    def test_unknown_track_is_rejected(self):
+        response = self.start(category="voice", trackId="T99-9")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_TRACK")
+
+    def test_without_body_it_still_uses_the_session(self):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T03-1"},
+            content_type="application/json",
+        )
+
+        response = self.client.post("/api/v1/training-sessions")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            Session.objects.get(pk=response.json()["sessionId"]).scenario.track, "T03-1"
+        )

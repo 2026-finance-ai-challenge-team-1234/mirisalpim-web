@@ -123,6 +123,38 @@ def _trainable_tracks():
     return set(Scenario.objects.values_list("track", flat=True))
 
 
+#: Session.DIFFICULTY 와 같은 값. 프론트가 직접 보낼 때만 검사한다.
+DIFFICULTIES = {"easy", "normal", "hard"}
+
+#: 세션에 기록할 진입 경로 (ERD 의 SESSION.entry_path).
+ENTRY_PATHS = {"recommended", "direct"}
+
+
+def _validate_selection(category, track):
+    """분류표에 있고 시나리오까지 적재된 조합인지 확인한다.
+
+    문제가 없으면 None, 있으면 오류 응답을 돌려준다.
+    클라이언트가 보낸 available 을 믿지 않고 서버가 다시 확인하는 지점이다.
+    """
+    if category not in TAXONOMY:
+        return error_response("INVALID_CATEGORY", "지원하지 않는 카테고리입니다.", 400)
+
+    known = {
+        sub["id"]
+        for group in TAXONOMY[category]
+        for sub in group["subItems"]
+    }
+    if track not in known:
+        return error_response("INVALID_TRACK", "지원하지 않는 훈련 유형입니다.", 400)
+
+    if track not in _trainable_tracks():
+        return error_response(
+            "SCENARIO_NOT_AVAILABLE", "아직 준비되지 않은 훈련 유형입니다.", 409
+        )
+
+    return None
+
+
 @require_POST
 def user_info(request):
     """P-03-02. 직접 선택한 훈련을 세션에 기록한다.
@@ -138,22 +170,9 @@ def user_info(request):
     category = body.get("category")
     track = body.get("trackId")
 
-    if category not in TAXONOMY:
-        return error_response("INVALID_CATEGORY", "지원하지 않는 카테고리입니다.", 400)
-
-    known = {
-        sub["id"]
-        for group in TAXONOMY[category]
-        for sub in group["subItems"]
-    }
-    if track not in known:
-        return error_response("INVALID_TRACK", "지원하지 않는 훈련 유형입니다.", 400)
-
-    # 클라이언트가 보낸 available 을 믿지 않고 서버가 다시 확인한다.
-    if track not in _trainable_tracks():
-        return error_response(
-            "SCENARIO_NOT_AVAILABLE", "아직 준비되지 않은 훈련 유형입니다.", 409
-        )
+    failure = _validate_selection(category, track)
+    if failure is not None:
+        return failure
 
     store_selection(request.session, category, track, entry_path="direct")
 
@@ -188,6 +207,37 @@ def recommendations(request):
     return json_response(result)
 
 
+def _selection_from_body(request, body):
+    """프론트가 직접 보낸 선택을 검증하고 세션에 기록한다.
+
+    반환: (선택, 오류응답). 둘 중 하나만 값이 있다.
+    """
+    category = body.get("category")
+    track = body.get("trackId")
+
+    failure = _validate_selection(category, track)
+    if failure is not None:
+        return None, failure
+
+    difficulty = body.get("difficulty")
+    if difficulty is not None and difficulty not in DIFFICULTIES:
+        return None, error_response(
+            "INVALID_DIFFICULTY", "지원하지 않는 난이도입니다.", 400
+        )
+
+    # entryPath 를 안 보내면 앞선 단계가 세션에 남긴 값을 유지한다. 그것도 없으면
+    # 직접 선택으로 본다 (ERD 의 추천 경로 vs 직접 선택 비교에 쓰이는 값이다).
+    previous = get_selection(request.session) or {}
+    entry_path = body.get("entryPath") or previous.get("entry_path") or "direct"
+    if entry_path not in ENTRY_PATHS:
+        return None, error_response(
+            "INVALID_ENTRY_PATH", "지원하지 않는 진입 경로입니다.", 400
+        )
+
+    store_selection(request.session, category, track, entry_path, difficulty)
+    return get_selection(request.session), None
+
+
 @require_POST
 def start_training(request):
     """P-04 / P-05-01. 고른 훈련으로 세션을 만들고 사기범의 첫 발화를 돌려준다.
@@ -195,15 +245,29 @@ def start_training(request):
     LLM 을 호출하지 않는다 - 첫 발화는 시나리오 카드의 opening 을 그대로 쓴다
     (ai_core.start_session: "결정적이고, 지연이 0이고, 반드시 각본 위에서 시작한다").
 
+    고른 유형은 두 가지 방법 중 하나로 전달된다.
+
+      (a) body 없이 호출 - 앞선 /recommendations 나 /user-info 가 세션에 남긴 값을 쓴다.
+      (b) body 로 명시 - {"category", "trackId", "difficulty"?, "entryPath"?}
+          프론트가 추천 결과를 직접 들고 훈련으로 넘어가는 흐름을 위한 것이다.
+          보낸 값은 세션에도 기록해 이후 흐름과 어긋나지 않게 한다.
+
     ⚠️ 응답에 시나리오 제목·페르소나·목표를 담지 않는다. 제목이 "검찰 사칭 —",
     "경찰 민원 회신 —" 처럼 is_scam 을 그대로 누설하고, 페르소나 표기도 시나리오마다
     "가상 위협 발신자"처럼 정답을 알려준다. 훈련생은 지금 상황이 사기인지 알면 안 된다.
     """
-    selection = get_selection(request.session)
-    if not selection:
-        return error_response(
-            "NO_SELECTION", "먼저 훈련 유형을 선택해 주세요.", 400
-        )
+    body = parse_json_body(request) or {}
+
+    if body.get("category") or body.get("trackId"):
+        selection, failure = _selection_from_body(request, body)
+        if failure is not None:
+            return failure
+    else:
+        selection = get_selection(request.session)
+        if not selection:
+            return error_response(
+                "NO_SELECTION", "먼저 훈련 유형을 선택해 주세요.", 400
+            )
 
     candidates = list(
         Scenario.objects.filter(
