@@ -16,7 +16,10 @@ import sys
 import dj_database_url
 from dotenv import load_dotenv
 
-load_dotenv()
+# .env 는 mirisalpim-web/ 루트 하나만 읽는다 (.env.example·ai_core/config.py 와 같은 위치).
+# 인자 없는 load_dotenv() 는 backend/config/ 부터 위로 거슬러 올라가며 찾기 때문에,
+# backend/.env 가 생기면 그쪽이 먼저 잡혀 설정이 두 곳으로 갈라진다.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 IS_TEST = "test" in sys.argv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.

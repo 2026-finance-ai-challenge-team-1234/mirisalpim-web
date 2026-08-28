@@ -17,6 +17,7 @@ ai_core/eval/results/
 
 # GCP 서비스 계정 키 — 보안상 git 제외.
 .gcp-credentials.json
+gcp-credentials.json
 
 # 음성 POC 세션 로그 + 녹음 원본 (poc/voice_chat.py) — 실행마다 생성됨.
 poc/results/
