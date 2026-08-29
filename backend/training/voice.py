@@ -48,6 +48,11 @@ VOICE_BY_PRESET = {
 }
 DEFAULT_VOICE = "ko-KR-Chirp3-HD-Charon"
 
+#: 스미싱 카드가 쓰는 값. 문자 대화라 읽어줄 음성이 없다는 표시다.
+#: 지금은 category 로 이미 걸러지지만, voice 카드에 이 값이 들어오면 엉뚱한
+#: 화자로 읽히는 대신 조용히 넘어가도록 여기서도 막는다.
+SILENT_PRESET = "text_only"
+
 #: 브라우저 MediaRecorder 기본 출력. 프론트가 다른 값을 쓰면 요청에서 넘겨받는다.
 DEFAULT_SAMPLE_RATE = 48000
 
@@ -158,7 +163,7 @@ def synthesize_b64(text, voice_preset=None):
     """
     import base64
 
-    if not text:
+    if not text or voice_preset == SILENT_PRESET:
         return None
     try:
         return base64.b64encode(synthesize(text, voice_preset)).decode("ascii")

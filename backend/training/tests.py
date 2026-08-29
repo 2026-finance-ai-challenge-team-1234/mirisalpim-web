@@ -39,6 +39,27 @@ from .views import (
 )
 
 
+#: 테스트는 외부 유료 API 를 부르지 않는다.
+#:
+#: LLM 호출은 각 테스트가 step/interpret 을 대체해서 막고 있었는데, TTS 는
+#: 빠져 있었다. 자격증명이 있는 개발 기계에서는 훈련을 시작할 때마다 실제 Chirp
+#: 합성이 일어나 테스트가 느려지고(측정: 한 테스트 87초) 요금도 나간다.
+#: 모듈 전체에서 막고, 음성 계약을 확인하는 VoiceTurnTests 는 자기 setUp 에서
+#: 원하는 값으로 다시 덮어쓴다.
+_voice_patcher = None
+
+
+def setUpModule():
+    global _voice_patcher
+    _voice_patcher = patch("training.views.synthesize_b64", return_value=None)
+    _voice_patcher.start()
+
+
+def tearDownModule():
+    if _voice_patcher is not None:
+        _voice_patcher.stop()
+
+
 class BootstrapTests(TestCase):
     """P-01. 익명 세션 쿠키 + CSRF 쿠키 발급"""
 
@@ -1783,7 +1804,14 @@ class StartTrainingWithBodyTests(TestCase):
         self.assertEqual(response.json()["error"]["code"], "INVALID_DIFFICULTY")
 
     def test_track_without_scenario_is_rejected(self):
-        """프론트가 고른 값도 서버가 다시 확인한다."""
+        """프론트가 고른 값도 서버가 다시 확인한다.
+
+        109개 소분류가 모두 채워진 뒤로는 비어 있는 트랙이 없어서, 조건을 직접
+        만들어 검증한다. 시나리오가 빠지거나 seed 가 부분적으로 실패한 상황을
+        상정한 방어선이다.
+        """
+        Scenario.objects.filter(track="T06-2").delete()
+
         response = self.start(category="voice", trackId="T06-2")
 
         self.assertEqual(response.status_code, 409)
