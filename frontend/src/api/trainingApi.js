@@ -6,7 +6,13 @@
 // 훈련 대화는 가짜 데이터로 대체하면 사용자가 "AI와 대화했다"고 착각하게 되므로,
 // 실패는 화면에 그대로 드러내고 재시도하게 해야 함.
 
-import { apiPost, apiPostRaw, newIdempotencyKey } from "./client";
+import {
+  ApiError,
+  apiPost,
+  apiPostRaw,
+  apiPostRawSse,
+  newIdempotencyKey,
+} from "./client";
 
 // 훈련 시작. body 없음 — 어떤 유형을 고를지는 서버 세션에 이미 저장돼 있음
 // (추천 트랙: POST /recommendations 시 저장 / 직접선택 트랙: POST /user-info 시 저장)
@@ -34,6 +40,35 @@ export function sendAudioTurn(sessionId, audioBlob, sampleRate = 48000, idempote
     {
       contentType: audioBlob.type || "audio/webm",
       idempotencyKey: idempotencyKey || newIdempotencyKey(),
+    },
+  );
+}
+
+// 음성 한 턴을 STT한 뒤 승인된 문장·TTS를 SSE로 받는다.
+// 서버의 error 이벤트도 일반 API 오류와 같은 ApiError로 바꿔 화면 처리를 통일한다.
+export function sendAudioTurnStream(
+  sessionId,
+  audioBlob,
+  sampleRate = 48000,
+  { idempotencyKey, signal, onEvent } = {},
+) {
+  const query = new URLSearchParams({ sampleRate: String(sampleRate) });
+  return apiPostRawSse(
+    `/training-sessions/${sessionId}/turns/audio/stream?${query}`,
+    audioBlob,
+    {
+      contentType: audioBlob.type || "audio/webm",
+      idempotencyKey: idempotencyKey || newIdempotencyKey(),
+      signal,
+      onEvent: async (event, data) => {
+        if (event === "error") {
+          throw new ApiError(
+            data?.code || "AI_ERROR",
+            data?.message || "응답 생성에 실패했습니다.",
+          );
+        }
+        await onEvent?.(event, data);
+      },
     },
   );
 }

@@ -1365,6 +1365,26 @@ class TurnStreamTests(TransactionTestCase):
             body = drain(response)
         return response, parse_sse(body)
 
+    def audio_stream(self, session_id, heard, synthesized=None):
+        synthesized = synthesized or ["YXVkaW8tMQ==", "YXVkaW8tMg=="]
+        with patch("training.views.transcribe", return_value=heard):
+            with patch(
+                "training.views.step",
+                side_effect=lambda e, t, on_delta=None, **kw: fake_streaming_step(
+                    e, t, on_delta=on_delta
+                ),
+            ):
+                with patch(
+                    "training.views.synthesize_b64", side_effect=synthesized
+                ) as synthesize:
+                    response = self.client.post(
+                        f"/api/v1/training-sessions/{session_id}/turns/audio/stream",
+                        data=b"fake-webm-bytes",
+                        content_type="audio/webm",
+                    )
+                    body = drain(response)
+        return response, parse_sse(body), synthesize
+
     def test_streams_sentences_then_done(self):
         session_id = self.start_training()
 
@@ -1386,6 +1406,66 @@ class TurnStreamTests(TransactionTestCase):
         done = dict(events)["done"]
         self.assertEqual(done["text"], "첫 번째 문장입니다.두 번째 문장입니다.")
         self.assertFalse(done["ended"])
+
+    def test_audio_stream_sends_each_approved_sentence_then_its_audio(self):
+        session_id = self.start_training()
+
+        response, events, synthesize = self.audio_stream(
+            session_id, "저 그런 적 없는데요"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        accepted = next(data for name, data in events if name == "accepted")
+        self.assertEqual(accepted["userText"], "저 그런 적 없는데요")
+        sentence_events = [
+            (name, data["sequence"])
+            for name, data in events
+            if name in {"delta", "audio"}
+        ]
+        self.assertEqual(
+            sentence_events,
+            [("delta", 1), ("audio", 1), ("delta", 2), ("audio", 2)],
+        )
+        audios = [data["audio"] for name, data in events if name == "audio"]
+        self.assertEqual(audios, ["YXVkaW8tMQ==", "YXVkaW8tMg=="])
+        self.assertEqual(synthesize.call_count, 2)
+
+    def test_audio_stream_keeps_text_and_done_when_one_tts_call_fails(self):
+        session_id = self.start_training()
+
+        _, events, _ = self.audio_stream(
+            session_id, "네", synthesized=[None, "YXVkaW8tMg=="]
+        )
+
+        deltas = [data["text"] for name, data in events if name == "delta"]
+        self.assertEqual(deltas, ["첫 번째 문장입니다.", "두 번째 문장입니다."])
+        audios = [data for name, data in events if name == "audio"]
+        self.assertEqual([audio["sequence"] for audio in audios], [2])
+        self.assertEqual(events[-1][0], "done")
+        self.assertFalse(events[-1][1]["audioComplete"])
+
+    def test_audio_stream_tts_timeout_does_not_cancel_the_turn(self):
+        session_id = self.start_training()
+
+        with patch("training.views.TTS_TIMEOUT_SECONDS", 0):
+            _, events, _ = self.audio_stream(session_id, "네")
+
+        self.assertEqual(events[-1][0], "done")
+        self.assertFalse(events[-1][1]["audioComplete"])
+        self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 3)
+
+    def test_audio_stream_masks_recognised_pii_before_display_and_storage(self):
+        session_id = self.start_training()
+
+        _, events, _ = self.audio_stream(
+            session_id, "제 주민번호는 900101-1234567입니다"
+        )
+
+        accepted = next(data for name, data in events if name == "accepted")
+        self.assertNotIn("900101-1234567", accepted["userText"])
+        self.assertIn("[주민등록번호]", accepted["userText"])
+        stored = Session.objects.get(pk=session_id).turns.filter(role="user").first()
+        self.assertNotIn("900101-1234567", stored.text)
 
     def test_disables_proxy_buffering(self):
         """Railway 프록시가 모아두면 스트리밍 이점이 사라진다."""
