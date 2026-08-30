@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
+from django.utils import timezone
 import uuid
 
 #: 연령 트랙. 시나리오 하나가 여러 트랙에 제공될 수 있어 Scenario.target_tracks 는 배열이다.
@@ -131,9 +132,18 @@ class Session(models.Model):
         ("direct", "직접 선택")
     ]
 
+    STATUS_ACTIVE = "active"
+    STATUS_AWAITING_JUDGMENT = "awaiting_judgment"
+    STATUS_JUDGING = "judging"
+    STATUS_ENDED = "ended"
+    STATUS_EXPIRED = "expired"
+
     STATUS = [
-        ("active", "진행 중"),
-        ("ended", "종료")
+        (STATUS_ACTIVE, "진행 중"),
+        (STATUS_AWAITING_JUDGMENT, "최종 판단 대기"),
+        (STATUS_JUDGING, "최종 판단 처리 중"),
+        (STATUS_ENDED, "종료"),
+        (STATUS_EXPIRED, "만료"),
     ]
 
     #: scenario.md §4·§5 — 난이도는 카테고리와 독립된 축이고 Q4(대응 습관)로 정해진다.
@@ -155,9 +165,20 @@ class Session(models.Model):
     resistance_count = models.PositiveSmallIntegerField(default=0)
     turn = models.PositiveSmallIntegerField(default=0)
     current_stage = models.ForeignKey(Stage, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")    
-    status = models.CharField(max_length=10, choices=STATUS)
+    status = models.CharField(max_length=20, choices=STATUS)
     started_at = models.DateTimeField(auto_now_add=True)
+    #: 쿠키 만료와 별개로 DB 원문 보존 시간을 판단하는 기준이다.
+    #: 성공한 턴 저장·판단 상태 전환마다 명시적으로 갱신한다.
+    last_activity_at = models.DateTimeField(default=timezone.now)
     ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["status", "last_activity_at"],
+                name="training_s_status_4e2c_idx",
+            )
+        ]
 
 class Turn(models.Model):
     ROLE =[

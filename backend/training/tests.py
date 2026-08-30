@@ -1,7 +1,9 @@
 import asyncio
+import importlib
 import json
 import threading
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from unittest import skipUnless
 from unittest.mock import patch
@@ -17,15 +19,21 @@ from ai_core.state import (
     record_turn,
     try_advance_stage,
 )
+from django.apps import apps as django_apps
 from django.conf import settings
 from django.core.cache import cache
 from django.core.management import call_command
 from django.test import Client, TestCase, TransactionTestCase
+from django.utils import timezone
 
 from .diagnosis import _official_links
 from .engine_state import load_state, save_state
 from .grading import ACTION_API_NAMES, first_detectable_turn, grade
 from .models import RiskyAction, Scenario, Session, Stage, TellPoint
+from .retention import (
+    CLEANUP_CACHE_KEY,
+    cleanup_expired_sessions,
+)
 from .throttle import TURN_RATE_LIMIT, TURN_RATE_WINDOW_SECONDS
 from .voice import VoiceUnavailable
 from .selection import SELECTION_KEY
@@ -833,8 +841,24 @@ class SubmitTurnTests(TestCase):
         self.assertTrue(payload["ended"])
         self.assertIn("최대 턴", payload["endReason"])
         session.refresh_from_db()
-        self.assertEqual(session.status, "ended")
-        self.assertIsNotNone(session.ended_at)
+        self.assertEqual(session.status, Session.STATUS_AWAITING_JUDGMENT)
+        self.assertIsNone(session.ended_at)
+        self.assertTrue(session.turns.exclude(text="").exists())
+
+    def test_expired_session_is_rejected_and_discarded(self):
+        session_id = self.start_training()
+        Session.objects.filter(pk=session_id).update(
+            last_activity_at=timezone.now()
+            - timedelta(seconds=settings.SESSION_COOKIE_AGE + 1)
+        )
+
+        response = self.turn(session_id, "안녕하세요")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "SESSION_EXPIRED")
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.status, Session.STATUS_EXPIRED)
+        self.assertEqual(set(session.turns.values_list("text", flat=True)), {""})
 
     def test_unknown_session_id_is_404(self):
         self.client.get("/api/v1/bootstrap")
@@ -1057,6 +1081,86 @@ class SubmitJudgmentTests(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"]["code"], "ALREADY_JUDGED")
 
+    def test_judgment_in_progress_is_rejected(self):
+        session_id = self.start_training()
+        Session.objects.filter(pk=session_id).update(status=Session.STATUS_JUDGING)
+
+        response = self.judge(session_id)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json()["error"]["code"], "JUDGMENT_IN_PROGRESS"
+        )
+
+    def test_failed_report_generation_releases_judgment_reservation(self):
+        session_id = self.start_training()
+
+        with patch("training.views.grade", side_effect=RuntimeError("report failed")):
+            with self.assertRaises(RuntimeError):
+                self.judge(session_id)
+
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.status, Session.STATUS_ACTIVE)
+        self.assertFalse(hasattr(session, "judgment"))
+
+    def test_judgment_blocks_an_in_flight_turn_from_being_committed(self):
+        session_id = self.start_training()
+        session = Session.objects.get(pk=session_id)
+        scenario = load_scenario(session.scenario_id)
+        state = load_state(session)
+        loaded_turn = session.turn
+        outcome = fake_step(Engine(scenario=scenario, state=state), "늦게 도착한 발화")
+
+        def collide_during_interpret(*args, **kwargs):
+            with self.assertRaises(ConcurrentTurnError):
+                _commit_turn(
+                    session_id,
+                    session.anon_client_id,
+                    loaded_turn,
+                    state,
+                    outcome,
+                )
+            return None
+
+        with patch(
+            "training.views.interpret", side_effect=collide_during_interpret
+        ):
+            response = self.judge(session_id)
+
+        self.assertEqual(response.status_code, 200)
+        session.refresh_from_db()
+        self.assertEqual(session.status, Session.STATUS_ENDED)
+        self.assertEqual(session.turns.count(), 1)
+        self.assertEqual(set(session.turns.values_list("text", flat=True)), {""})
+
+    def test_awaiting_judgment_session_can_finish_and_discard_transcript(self):
+        session_id = self.start_training()
+        Session.objects.filter(pk=session_id).update(
+            status=Session.STATUS_AWAITING_JUDGMENT
+        )
+
+        response = self.judge(session_id)
+
+        self.assertEqual(response.status_code, 200)
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.status, Session.STATUS_ENDED)
+        self.assertEqual(set(session.turns.values_list("text", flat=True)), {""})
+
+    def test_expired_session_cannot_be_judged(self):
+        session_id = self.start_training()
+        Session.objects.filter(pk=session_id).update(
+            last_activity_at=timezone.now()
+            - timedelta(seconds=settings.SESSION_COOKIE_AGE + 1)
+        )
+
+        response = self.judge(session_id)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "SESSION_EXPIRED")
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.status, Session.STATUS_EXPIRED)
+        self.assertEqual(set(session.turns.values_list("text", flat=True)), {""})
+
     def test_another_anonymous_client_gets_404(self):
         session_id = self.start_training()
         other = Client()
@@ -1081,6 +1185,90 @@ class SubmitJudgmentTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "INVALID_JUDGMENT")
+
+
+class SessionRetentionTests(TestCase):
+    """로그아웃이 없는 익명 서비스에서도 방치된 원문은 30분 후 파기한다."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+
+    def start_training(self):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        return self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+    def make_stale(self, session_id, status):
+        Session.objects.filter(pk=session_id).update(
+            status=status,
+            last_activity_at=timezone.now()
+            - timedelta(seconds=settings.SESSION_COOKIE_AGE + 1),
+        )
+
+    def test_cleanup_expires_every_unfinished_status_and_discards_text(self):
+        session_ids = []
+        for status in (
+            Session.STATUS_ACTIVE,
+            Session.STATUS_AWAITING_JUDGMENT,
+            Session.STATUS_JUDGING,
+        ):
+            session_id = self.start_training()
+            self.make_stale(session_id, status)
+            session_ids.append(session_id)
+
+        cleaned = cleanup_expired_sessions()
+
+        self.assertEqual(cleaned, 3)
+        for session in Session.objects.filter(pk__in=session_ids):
+            self.assertEqual(session.status, Session.STATUS_EXPIRED)
+            self.assertIsNotNone(session.ended_at)
+            self.assertEqual(set(session.turns.values_list("text", flat=True)), {""})
+
+    def test_cleanup_keeps_recent_session_text(self):
+        session_id = self.start_training()
+
+        cleaned = cleanup_expired_sessions()
+
+        self.assertEqual(cleaned, 0)
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.status, Session.STATUS_ACTIVE)
+        self.assertTrue(session.turns.exclude(text="").exists())
+
+    def test_bootstrap_triggers_bounded_cleanup(self):
+        session_id = self.start_training()
+        self.make_stale(session_id, Session.STATUS_ACTIVE)
+        cache.delete(CLEANUP_CACHE_KEY)
+
+        response = self.client.get("/api/v1/bootstrap")
+
+        self.assertEqual(response.status_code, 200)
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.status, Session.STATUS_EXPIRED)
+        self.assertEqual(set(session.turns.values_list("text", flat=True)), {""})
+
+    def test_migration_cleans_legacy_auto_ended_session(self):
+        session_id = self.start_training()
+        Session.objects.filter(pk=session_id).update(
+            status=Session.STATUS_ENDED,
+            ended_at=timezone.now(),
+        )
+        migration = importlib.import_module(
+            "training.migrations.0004_session_lifecycle_status"
+        )
+
+        migration.discard_existing_ended_transcripts(django_apps, None)
+
+        session = Session.objects.get(pk=session_id)
+        self.assertEqual(session.status, Session.STATUS_EXPIRED)
+        self.assertEqual(set(session.turns.values_list("text", flat=True)), {""})
 
 
 def fake_streaming_step(engine, user_text, on_delta=None, risky_actions=(), **kwargs):

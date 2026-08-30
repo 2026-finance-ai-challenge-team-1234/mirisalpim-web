@@ -23,6 +23,12 @@ from .http import error_response, json_response, parse_json_body
 from .models import DiagnosisReport, Scenario, Session, UserJudgment
 from .pii import mask_pii
 from .recommendation import recommend
+from .retention import (
+    discard_transcript,
+    expire_locked_session,
+    is_expired,
+    maybe_cleanup_expired_sessions,
+)
 from .selection import get_selection, store_selection
 from .throttle import (
     idempotency_cache_key,
@@ -68,6 +74,7 @@ def bootstrap(request):
     계산하므로, 시나리오가 없는 카테고리는 자동으로 false
     """
     ensure_anon_client_id(request.session)
+    maybe_cleanup_expired_sessions()
 
     available = set(Scenario.objects.values_list("category", flat=True).distinct())
 
@@ -472,7 +479,17 @@ def _open_turn(session_id, anon_client_id):
             return None, error_response(
                 "SESSION_NOT_FOUND", "훈련을 찾을 수 없습니다.", 404
             )
-        if session.status != "active":
+        if session.status == Session.STATUS_EXPIRED or is_expired(session):
+            if session.status != Session.STATUS_EXPIRED:
+                expire_locked_session(session)
+            return None, error_response(
+                "SESSION_EXPIRED", "훈련 시간이 만료되었습니다. 새로 시작해 주세요.", 409
+            )
+        if session.status == Session.STATUS_JUDGING:
+            return None, error_response(
+                "TURN_CONFLICT", "최종 판단을 처리 중입니다.", 409
+            )
+        if session.status != Session.STATUS_ACTIVE:
             return None, error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
 
         return (load_scenario(session.scenario_id), load_state(session), session.turn), None
@@ -655,36 +672,118 @@ def submit_judgment(request, session_id):
             return error_response("SESSION_NOT_FOUND", "훈련을 찾을 수 없습니다.", 404)
         if UserJudgment.objects.filter(session=session).exists():
             return error_response("ALREADY_JUDGED", "이미 판단을 제출했습니다.", 409)
+        if session.status == Session.STATUS_EXPIRED or is_expired(session):
+            if session.status != Session.STATUS_EXPIRED:
+                expire_locked_session(session)
+            return error_response(
+                "SESSION_EXPIRED", "훈련 시간이 만료되었습니다. 새로 시작해 주세요.", 409
+            )
+        if session.status == Session.STATUS_JUDGING:
+            return error_response(
+                "JUDGMENT_IN_PROGRESS", "최종 판단을 처리 중입니다.", 409
+            )
+        if session.status not in {
+            Session.STATUS_ACTIVE,
+            Session.STATUS_AWAITING_JUDGMENT,
+        }:
+            return error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
 
         scenario = load_scenario(session.scenario_id)
         state = load_state(session)
         source_refs = session.scenario.source_refs
+        loaded_turn = session.turn
+        previous_status = session.status
 
-    state.user_judgment = EngineJudgment(turn=state.turn, is_scam_guess=is_scam_guess)
-
-    # 등급·놓친 단서·행동 가이드는 코드가 정한다 (리포트 문서 §8).
-    result = grade(scenario, state)
-    # source_refs 는 ai_core.types.Scenario 에 없는 필드라 DB 쪽에서 읽는다.
-    report = build_report(scenario, state, result, source_refs=source_refs)
-
-    # 트랜잭션 밖 - 실패하거나 늦으면 규칙 기반 문장을 그대로 쓴다.
-    interpreted = interpret(scenario, state, result, report)
-    if interpreted:
-        report.update(interpreted)
+        # 모델 호출 동안 행 잠금을 유지하지 않되, 새 턴이 저장되지 않도록 상태를
+        # 먼저 예약한다. _commit_turn은 active만 허용하므로 진행 중이던 턴도 폐기된다.
+        session.status = Session.STATUS_JUDGING
+        session.last_activity_at = timezone.now()
+        session.save(update_fields=["status", "last_activity_at"])
 
     try:
-        _finish_session(session_id, is_scam_guess, result, report)
+        state.user_judgment = EngineJudgment(
+            turn=state.turn, is_scam_guess=is_scam_guess
+        )
+
+        # 등급·놓친 단서·행동 가이드는 코드가 정한다 (리포트 문서 §8).
+        result = grade(scenario, state)
+        # source_refs 는 ai_core.types.Scenario 에 없는 필드라 DB 쪽에서 읽는다.
+        report = build_report(scenario, state, result, source_refs=source_refs)
+
+        # 트랜잭션 밖 - 실패하거나 늦으면 규칙 기반 문장을 그대로 쓴다.
+        interpreted = interpret(scenario, state, result, report)
+        if interpreted:
+            report.update(interpreted)
+
+        _finish_session(
+            session_id,
+            anon_client_id,
+            loaded_turn,
+            is_scam_guess,
+            result,
+            report,
+        )
     except IntegrityError:
-        # 준비하는 사이에 다른 요청이 먼저 판단을 저장했다.
+        _release_judgment(
+            session_id, anon_client_id, loaded_turn, previous_status
+        )
         return error_response("ALREADY_JUDGED", "이미 판단을 제출했습니다.", 409)
+    except JudgmentConflictError:
+        _release_judgment(
+            session_id, anon_client_id, loaded_turn, previous_status
+        )
+        return error_response(
+            "JUDGMENT_CONFLICT", "훈련 상태가 변경되었습니다. 다시 시도해 주세요.", 409
+        )
+    except Exception:
+        # 규칙 기반 리포트 생성 등 예상하지 못한 실패가 나도 judging에 고착시키지 않는다.
+        _release_judgment(
+            session_id, anon_client_id, loaded_turn, previous_status
+        )
+        raise
 
     return json_response(report)
 
 
-def _finish_session(session_id, is_scam_guess, result, report):
+class JudgmentConflictError(Exception):
+    """판단 준비 중 소유권·턴·상태가 바뀐 경우."""
+
+
+def _release_judgment(session_id, anon_client_id, loaded_turn, previous_status):
+    """판단 생성 실패 시 예약 상태를 안전하게 원복한다."""
+    with transaction.atomic():
+        session = (
+            Session.objects.select_for_update()
+            .filter(pk=session_id, anon_client_id=anon_client_id)
+            .first()
+        )
+        if (
+            session is None
+            or session.status != Session.STATUS_JUDGING
+            or session.turn != loaded_turn
+        ):
+            return
+        session.status = previous_status
+        session.last_activity_at = timezone.now()
+        session.save(update_fields=["status", "last_activity_at"])
+
+
+def _finish_session(
+    session_id, anon_client_id, loaded_turn, is_scam_guess, result, report
+):
     """채점 결과를 저장하고 세션을 닫는다. 원문은 여기서 지운다."""
     with transaction.atomic():
-        session = Session.objects.select_for_update().get(pk=session_id)
+        session = (
+            Session.objects.select_for_update()
+            .filter(pk=session_id, anon_client_id=anon_client_id)
+            .first()
+        )
+        if (
+            session is None
+            or session.status != Session.STATUS_JUDGING
+            or session.turn != loaded_turn
+        ):
+            raise JudgmentConflictError
 
         UserJudgment.objects.create(
             session=session,
@@ -704,20 +803,12 @@ def _finish_session(session_id, is_scam_guess, result, report):
             weakness=report["weakness"],
         )
 
-        session.status = "ended"
+        session.status = Session.STATUS_ENDED
         session.ended_at = session.ended_at or timezone.now()
-        session.save(update_fields=["status", "ended_at"])
+        session.last_activity_at = timezone.now()
+        session.save(update_fields=["status", "ended_at", "last_activity_at"])
 
-        _discard_transcript(session)
-
-
-def _discard_transcript(session):
-    """대화 원문 파기.
-
-    행 자체는 남긴다 - 턴 번호·화자·단계는 타임라인에 쓰이고 개인정보가 아니다.
-    지우는 것은 발화 내용뿐이다 (기획서 10절: "대화는 세션 종료 시 파기").
-    """
-    session.turns.update(text="")
+        discard_transcript(session)
 
 
 #: 워커 스레드가 스트림 끝을 알리는 표식.
@@ -895,11 +986,16 @@ def _commit_turn(session_id, anon_client_id, loaded_turn, state, outcome):
             .filter(pk=session_id, anon_client_id=anon_client_id)
             .first()
         )
-        if session is None or session.turn != loaded_turn:
+        if (
+            session is None
+            or session.status != Session.STATUS_ACTIVE
+            or session.turn != loaded_turn
+        ):
             raise ConcurrentTurnError
 
         save_state(session, state)
         if outcome.ended:
-            session.status = "ended"
-            session.ended_at = timezone.now()
-            session.save(update_fields=["status", "ended_at"])
+            # 사용자 판단과 리포트 생성에 원문이 아직 필요하다. 최종 종료로 표시하지
+            # 않고 판단 대기로 둔 뒤, 판단 완료 또는 30분 만료 시 원문을 파기한다.
+            session.status = Session.STATUS_AWAITING_JUDGMENT
+            session.save(update_fields=["status"])
