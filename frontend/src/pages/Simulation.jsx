@@ -83,6 +83,12 @@ function describeError(err) {
       return { text: "아직 준비되지 않은 유형이에요. 다른 유형을 선택해주세요.", action: "reselect" };
     case "SESSION_NOT_FOUND":
       return { text: "훈련 세션을 찾을 수 없어요. 처음부터 다시 시작해주세요.", action: "restart" };
+    case "SESSION_EXPIRED":
+      return { text: "훈련 시간이 만료됐어요. 처음부터 다시 시작해주세요.", action: "restart" };
+    case "JUDGMENT_IN_PROGRESS":
+    case "JUDGMENT_CONFLICT":
+    case "TURN_CONFLICT":
+      return { text: "이전 요청을 처리하고 있어요. 잠시 후 다시 시도해주세요.", action: "retry" };
     case "SESSION_ENDED":
     case "ALREADY_JUDGED":
       return { text: "이미 종료된 훈련이에요. 결과 리포트를 확인해주세요.", action: "report" };

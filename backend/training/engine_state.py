@@ -14,6 +14,7 @@ append 만 된다 (record_turn, apply_judgment, mark_tell_points). 그래서 저
 """
 
 from ai_core.types import RiskyAction, SessionState, Turn, UserJudgment
+from django.utils import timezone
 
 from .models import RiskyAction as RiskyActionRow
 from .models import SessionTellPointHit, Stage, TellPoint
@@ -83,8 +84,15 @@ def save_state(session, state):
     session.turns_in_stage = state.turns_in_stage
     session.resistance_count = state.resistance_count
     session.current_stage = _stage_at(session, state.stage_index, stages)
+    session.last_activity_at = timezone.now()
     session.save(
-        update_fields=["turn", "turns_in_stage", "resistance_count", "current_stage"]
+        update_fields=[
+            "turn",
+            "turns_in_stage",
+            "resistance_count",
+            "current_stage",
+            "last_activity_at",
+        ]
     )
 
 
