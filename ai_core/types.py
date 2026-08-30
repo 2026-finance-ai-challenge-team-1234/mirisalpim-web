@@ -226,3 +226,12 @@ class SessionState:
     hit_tell_points: list[str] = field(default_factory=list)
     user_judgment: UserJudgment | None = None
     transcript: list[Turn] = field(default_factory=list)
+
+    #: 훈련생이 화면에서 입력한 값. 사기꾼 프롬프트에만 쓴다 — 실제 보이스피싱은
+    #: 이름을 알고 걸어오므로 이게 없으면 몰입이 크게 떨어진다.
+    #: ⚠️ 저장하지 않는다. Django 쪽 engine_state.save_state() 가 이 세 필드를
+    #:    DB 에 쓰지 않으며, 매 턴 요청 본문에서 다시 받는다 (기획서 10절의
+    #:    "개인정보 수집·저장 없음"을 지키기 위한 구조다).
+    trainee_name: str = ""
+    trainee_age: str = ""
+    trainee_region: str = ""

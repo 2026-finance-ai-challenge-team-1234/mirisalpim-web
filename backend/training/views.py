@@ -38,6 +38,8 @@ from .throttle import (
     turn_rate_exceeded,
 )
 from .tracks import TAXONOMY
+from .trainee import apply as apply_trainee
+from .trainee import from_body as trainee_from_body
 from .voice import VoiceUnavailable, synthesize_b64, transcribe
 
 #: 익명 식별자를 담는 세션 키로 원본 쿠키 값이 아니라 서버가 만든 파생 식별자를 넣음
@@ -397,19 +399,20 @@ def _risk_warnings(kinds):
 def _check_turn_request(request, session_id):
     """두 턴 경로가 공유하는 앞단 검사.
 
-    반환: (본문 텍스트, 익명 ID, 오류응답). 오류가 있으면 앞의 둘은 None 이다.
+    반환: (본문 텍스트, 익명 ID, 파싱된 본문, 오류응답).
+    오류가 있으면 앞의 셋은 None 이다.
     """
     body = parse_json_body(request)
     if body is None:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "INVALID_BODY", "요청 형식이 올바르지 않습니다.", 400
         )
 
     text = (body.get("text") or "").strip()
     if not text:
-        return None, None, error_response("EMPTY_INPUT", "입력이 비어 있습니다.", 400)
+        return None, None, None, error_response("EMPTY_INPUT", "입력이 비어 있습니다.", 400)
     if len(text) > MAX_INPUT_CHARS:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "INPUT_TOO_LARGE", f"{MAX_INPUT_CHARS}자 이내로 입력해 주세요.", 413
         )
 
@@ -417,14 +420,14 @@ def _check_turn_request(request, session_id):
 
     retry_after = turn_rate_exceeded(anon_client_id)
     if retry_after is not None:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "RATE_LIMITED",
             "요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.",
             429,
             headers={"Retry-After": str(retry_after)},
         )
 
-    return text, anon_client_id, None
+    return text, anon_client_id, body, None
 
 
 def _run_step(scenario, state, masked_text):
@@ -510,7 +513,7 @@ def submit_turn(request, session_id):
     LLM 호출은 트랜잭션 밖에서 한다. 턴 겹침은 저장 시점의 낙관적 검사로 막는다
     (_open_turn / _commit_turn 참고) - SSE 경로와 같은 방식이다.
     """
-    text, anon_client_id, failure = _check_turn_request(request, session_id)
+    text, anon_client_id, body, failure = _check_turn_request(request, session_id)
     if failure is not None:
         return failure
 
@@ -524,6 +527,8 @@ def submit_turn(request, session_id):
     if failure is not None:
         return failure
     scenario, state, loaded_turn = context
+    # 프롬프트에만 쓰고 저장하지 않는다 (trainee.py 참고).
+    apply_trainee(state, *trainee_from_body(body))
 
     masked_text, detected_pii = mask_pii(text)
 
@@ -555,13 +560,36 @@ def submit_turn(request, session_id):
     return json_response(payload)
 
 
+def _read_audio_request(request):
+    """(오디오 바이트, trainee dict). multipart 와 원본 바이트를 모두 받는다."""
+    if (request.content_type or "").startswith("multipart/"):
+        uploaded = request.FILES.get("audio")
+        audio = uploaded.read() if uploaded else b""
+        try:
+            trainee = json.loads(request.POST.get("trainee") or "{}")
+        except ValueError:
+            trainee = {}
+        return audio, trainee if isinstance(trainee, dict) else {}
+
+    return request.body, {}
+
+
 @require_POST
 def submit_turn_audio(request, session_id):
     """P-05-02 (음성). 브라우저 녹음을 받아 STT 후 한 턴 처리한다.
 
-    본문은 오디오 바이트 그대로다 (Content-Type: audio/webm). 브라우저
-    MediaRecorder 가 만드는 webm/opus 를 기대한다. 샘플레이트가 기본값(48000)과
-    다르면 ?sampleRate= 로 넘긴다.
+    본문은 두 가지 형태를 받는다.
+
+      audio/webm      오디오 바이트 그대로 (훈련생 정보 없이)
+      multipart/form-data
+                      audio   = 오디오 파일
+                      trainee = {"name","age","address"} JSON 문자열
+
+    훈련생 정보를 함께 보내려면 multipart 를 쓴다. 쿼리 문자열로 받지 않는 이유는
+    이름이 웹서버·프록시 접근 로그에 그대로 남기 때문이다.
+
+    브라우저 MediaRecorder 가 만드는 webm/opus 를 기대한다. 샘플레이트가
+    기본값(48000)과 다르면 ?sampleRate= 로 넘긴다.
 
     ⚠️ 오디오는 메모리에서만 다루고 저장하지 않는다. 인식된 텍스트는 PII 마스킹을
     거쳐 저장되며, 원본 음성은 응답을 만든 뒤 사라진다.
@@ -569,7 +597,7 @@ def submit_turn_audio(request, session_id):
     텍스트 경로(submit_turn)와 응답 모양이 같고 userText 만 더 있다 - 화면이
     "내가 말한 내용"을 보여줄 수 있어야 하기 때문이다.
     """
-    text, anon_client_id, failure = _transcribe_audio_request(request)
+    text, anon_client_id, trainee_raw, failure = _transcribe_audio_request(request)
     if failure is not None:
         return failure
 
@@ -577,6 +605,7 @@ def submit_turn_audio(request, session_id):
     if failure is not None:
         return failure
     scenario, state, loaded_turn = context
+    apply_trainee(state, *trainee_from_body({"trainee": trainee_raw}))
 
     masked_text, detected_pii = mask_pii(text)
 
@@ -613,55 +642,57 @@ def _transcribe_audio_request(request):
 
     동기·스트리밍 경로가 입력 제한, 속도 제한, 오류 코드를 완전히 동일하게 유지하도록
     한 곳에 둔다. 원본 오디오는 이 함수 밖으로 반환하지 않아 요청 처리 후 폐기된다.
+
+    반환: (인식된 텍스트, 익명 ID, trainee dict, 오류응답).
     """
     anon_client_id = ensure_anon_client_id(request.session)
 
     retry_after = turn_rate_exceeded(anon_client_id)
     if retry_after is not None:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "RATE_LIMITED",
             "요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.",
             429,
             headers={"Retry-After": str(retry_after)},
         )
 
-    audio = request.body
+    audio, trainee_raw = _read_audio_request(request)
     if not audio:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "EMPTY_AUDIO", "녹음된 음성이 없습니다.", 400
         )
     if len(audio) > MAX_AUDIO_BYTES:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "AUDIO_TOO_LARGE", "녹음이 너무 깁니다.", 413
         )
 
     try:
         sample_rate = int(request.GET.get("sampleRate", 48000))
     except ValueError:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "INVALID_SAMPLE_RATE", "잘못된 샘플레이트입니다.", 400
         )
 
     try:
         text = transcribe(audio, sample_rate)
     except VoiceUnavailable:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "VOICE_UNAVAILABLE", "음성 기능을 사용할 수 없습니다.", 503
         )
     except Exception:
         logger.exception("stt 실패")
-        return None, None, error_response(
+        return None, None, None, error_response(
             "STT_ERROR", "음성을 알아듣지 못했습니다.", 502
         )
 
     text = text.strip()
     if not text:
-        return None, None, error_response(
+        return None, None, None, error_response(
             "NO_SPEECH_DETECTED",
             "말씀하신 내용을 알아듣지 못했어요. 다시 말씀해 주세요.",
             400,
         )
-    return text[:MAX_INPUT_CHARS], anon_client_id, None
+    return text[:MAX_INPUT_CHARS], anon_client_id, trainee_raw, None
 
 
 @require_POST
@@ -869,7 +900,7 @@ def turn_stream(request, session_id):
     이벤트 루프를 막으며 소진해서, 문장이 하나씩 나가지 않고 턴이 끝난 뒤 한꺼번에
     도착한다 - 스트리밍의 이점이 통째로 사라진다.
     """
-    text, anon_client_id, failure = _check_turn_request(request, session_id)
+    text, anon_client_id, body, failure = _check_turn_request(request, session_id)
     if failure is not None:
         return failure
 
@@ -877,6 +908,7 @@ def turn_stream(request, session_id):
     if failure is not None:
         return failure
     scenario, state, loaded_turn = context
+    apply_trainee(state, *trainee_from_body(body))
 
     masked_text, detected_pii = mask_pii(text)
 
@@ -902,7 +934,7 @@ def turn_audio_stream(request, session_id):
     때까지 기다리지 않고, 안전 게이트가 승인한 문장부터 자막(delta)과 음성(audio)을
     내보낸다. 문장 TTS가 도는 동안 AI 코어 워커는 다음 문장을 계속 생성한다.
     """
-    text, anon_client_id, failure = _transcribe_audio_request(request)
+    text, anon_client_id, trainee_raw, failure = _transcribe_audio_request(request)
     if failure is not None:
         return failure
 
@@ -910,6 +942,7 @@ def turn_audio_stream(request, session_id):
     if failure is not None:
         return failure
     scenario, state, loaded_turn = context
+    apply_trainee(state, *trainee_from_body({"trainee": trainee_raw}))
 
     masked_text, detected_pii = mask_pii(text)
     return _streaming_response(

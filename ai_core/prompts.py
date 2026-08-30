@@ -87,6 +87,29 @@ DIFFICULTY_DIRECTIVE = {
 }
 
 
+def trainee_block(state: SessionState) -> str:
+    """훈련생 정보. 입력한 것이 없으면 빈 문자열이라 프롬프트에 아무것도 붙지 않는다.
+
+    실제 보이스피싱은 상대의 이름을 알고 걸어온다. 그 현실감을 위해 넣되,
+    이름을 매 문장 부르면 오히려 어색해지므로 사용 빈도를 지시한다.
+    """
+    lines = []
+    if state.trainee_name:
+        lines.append(f"이름: {state.trainee_name}")
+    if state.trainee_age:
+        lines.append(f"연령대: {state.trainee_age}")
+    if state.trainee_region:
+        lines.append(f"지역: {state.trainee_region}")
+    if not lines:
+        return ""
+    return (
+        "\n\n[훈련생 정보] 훈련생 본인이 화면에서 입력한 값입니다.\n"
+        + "\n".join(lines)
+        + "\n이름은 대화 전체에서 1~2회만 자연스럽게 부르세요. "
+        "매 문장 부르거나 정보를 나열하듯 읊지 마세요."
+    )
+
+
 def turn_state_block(stage: Stage, state: SessionState) -> str:
     """턴마다 달라지는 값. messages 끝에 system 역할로 붙인다"""
     risky = ", ".join(r.type for r in state.risky_actions) or "없음"
@@ -99,7 +122,7 @@ def turn_state_block(stage: Stage, state: SessionState) -> str:
 훈련생 저항 횟수: {state.resistance_count}
 진행 난이도({state.difficulty}): {difficulty}
 
-위 단계의 목표만 수행하세요. 2문장 이내로 답하세요."""
+위 단계의 목표만 수행하세요. 2문장 이내로 답하세요.{trainee_block(state)}"""
 
 
 #: 판정기 - 단계 전환은 "제안"만 한다, 최종 승인은 state.py(코드)가 한다.

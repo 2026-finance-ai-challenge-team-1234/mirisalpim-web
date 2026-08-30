@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from ai_core.engine import Engine, TurnOutcome, load_scenario, start_session
 from ai_core.llm import ConfigError
+from ai_core.prompts import trainee_block
 from ai_core.types import RiskyAction as EngineRiskyAction
 from ai_core.types import UserJudgment as EngineJudgment
 from ai_core.state import (
@@ -23,6 +24,7 @@ from django.apps import apps as django_apps
 from django.conf import settings
 from django.core.cache import cache
 from django.core.management import call_command
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, TransactionTestCase
 from django.utils import timezone
 
@@ -35,6 +37,7 @@ from .retention import (
     cleanup_expired_sessions,
 )
 from .throttle import TURN_RATE_LIMIT, TURN_RATE_WINDOW_SECONDS
+from .trainee import MAX_FIELD_CHARS
 from .voice import VoiceUnavailable
 from .selection import SELECTION_KEY
 from .views import (
@@ -2374,3 +2377,144 @@ class VoiceTurnTests(TestCase):
             _voice_audio(scenario, "안녕하세요")
 
         fake.assert_called_once_with("안녕하세요", scenario.persona.voice_preset)
+
+
+class TraineeInfoTests(TestCase):
+    """훈련생 정보는 프롬프트에만 쓰고 어디에도 저장하지 않는다."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("seed_scenarios", verbosity=0)
+
+    def setUp(self):
+        cache.clear()
+        patcher = patch("training.views.synthesize_b64", return_value=None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def start(self):
+        self.client.get("/api/v1/bootstrap")
+        self.client.post(
+            "/api/v1/user-info",
+            data={"category": "voice", "trackId": "T01-1"},
+            content_type="application/json",
+        )
+        return self.client.post("/api/v1/training-sessions").json()["sessionId"]
+
+    TRAINEE = {"name": "홍길동", "age": "60대 이상", "address": "서울시 성북구 정릉동 123-45"}
+
+    def turn(self, session_id, trainee=None, capture=None):
+        body = {"text": "저 그런 적 없는데요"}
+        if trainee is not None:
+            body["trainee"] = trainee
+
+        def fake(engine, text, **kwargs):
+            if capture is not None:
+                capture["state"] = engine.state
+            return fake_step(engine, text)
+
+        with patch("training.views.step", side_effect=fake):
+            return self.client.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data=body, content_type="application/json",
+            )
+
+    def test_trainee_reaches_the_prompt(self):
+        session_id = self.start()
+        seen = {}
+
+        self.turn(session_id, self.TRAINEE, capture=seen)
+
+        state = seen["state"]
+        self.assertEqual(state.trainee_name, "홍길동")
+        self.assertEqual(state.trainee_age, "60대 이상")
+        self.assertIn("홍길동", trainee_block(state))
+
+    def test_address_is_trimmed_to_city_and_district(self):
+        """상세 주소는 LLM 으로 보내지 않는다 (팀 결정)."""
+        session_id = self.start()
+        seen = {}
+
+        self.turn(session_id, self.TRAINEE, capture=seen)
+
+        self.assertEqual(seen["state"].trainee_region, "서울시 성북구")
+        self.assertNotIn("정릉동", trainee_block(seen["state"]))
+        self.assertNotIn("123-45", trainee_block(seen["state"]))
+
+    def test_nothing_is_stored_anywhere(self):
+        """세션에도 DB 에도 남지 않는다 (기획서 10절)."""
+        session_id = self.start()
+
+        self.turn(session_id, self.TRAINEE)
+
+        session = Session.objects.get(pk=session_id)
+        haystack = " ".join([
+            str(dict(self.client.session)),
+            str(list(session.turns.values_list("text", flat=True))),
+            session.anon_client_id,
+        ])
+        for secret in ("홍길동", "정릉동", "123-45", "60대 이상"):
+            self.assertNotIn(secret, haystack)
+
+    def test_it_is_optional(self):
+        """안 보내면 프롬프트에 아무것도 붙지 않는다."""
+        session_id = self.start()
+        seen = {}
+
+        response = self.turn(session_id, capture=seen)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(trainee_block(seen["state"]), "")
+
+    def test_long_values_are_trimmed(self):
+        session_id = self.start()
+        seen = {}
+
+        self.turn(session_id, {"name": "가" * 200}, capture=seen)
+
+        self.assertEqual(len(seen["state"].trainee_name), MAX_FIELD_CHARS)
+
+    def test_malformed_trainee_is_ignored(self):
+        session_id = self.start()
+        seen = {}
+
+        response = self.turn(session_id, "문자열입니다", capture=seen)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen["state"].trainee_name, "")
+
+    def test_audio_turn_accepts_trainee_via_multipart(self):
+        """오디오 경로는 multipart 로 받는다 - 쿼리 문자열은 로그에 남는다."""
+        session_id = self.start()
+        seen = {}
+
+        def fake(engine, text, **kwargs):
+            seen["state"] = engine.state
+            return fake_step(engine, text)
+
+        with patch("training.views.transcribe", return_value="여보세요"):
+            with patch("training.views.step", side_effect=fake):
+                response = self.client.post(
+                    f"/api/v1/training-sessions/{session_id}/turns/audio",
+                    data={
+                        "audio": SimpleUploadedFile("t.webm", b"fake", "audio/webm"),
+                        "trainee": json.dumps(self.TRAINEE, ensure_ascii=False),
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen["state"].trainee_name, "홍길동")
+        self.assertEqual(seen["state"].trainee_region, "서울시 성북구")
+
+    def test_audio_turn_still_accepts_raw_bytes(self):
+        """기존 계약(원본 바이트)도 그대로 동작한다."""
+        session_id = self.start()
+
+        with patch("training.views.transcribe", return_value="여보세요"):
+            with patch("training.views.step", side_effect=lambda e, t, **k: fake_step(e, t)):
+                response = self.client.post(
+                    f"/api/v1/training-sessions/{session_id}/turns/audio",
+                    data=b"fake-webm", content_type="audio/webm",
+                )
+
+        self.assertEqual(response.status_code, 200)
