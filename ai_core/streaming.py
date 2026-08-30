@@ -68,6 +68,8 @@ class StreamingSafetyGate:
 
     _queue: queue.Queue = field(default_factory=queue.Queue, init=False, repr=False)
     _worker: threading.Thread = field(init=False, repr=False)
+    #: close() 로 중단된 상태. 남은 문장을 검사 없이 버리기 위한 표시다.
+    _aborted: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
@@ -91,6 +93,18 @@ class StreamingSafetyGate:
         self._queue.put(_DONE)
         self._worker.join()
 
+    def close(self) -> None:
+        """턴이 중간에 실패했을 때 워커만 정리한다 (남은 문장은 검사하지 않는다).
+
+        finish() 와 달리 결과를 만들지 않는다 - 예외로 턴이 깨진 상황이라 남은 문장에
+        LLM 비용을 더 쓸 이유가 없다. 이걸 부르지 않으면 워커가 큐에서 영원히 대기해
+        실패한 턴마다 스레드가 하나씩 새어 나간다(daemon 이라 종료는 막지 않지만,
+        장시간 떠 있는 서버에서는 계속 쌓인다).
+        """
+        self._aborted = True
+        self._queue.put(_DONE)
+        self._worker.join()
+
     def _run_worker(self) -> None:
         """백그라운드에서 문장을 순서대로(FIFO) 안전 검사한다.
 
@@ -103,9 +117,16 @@ class StreamingSafetyGate:
             sentence = self._queue.get()
             if sentence is _DONE:
                 return
-            if self.blocked:
+            if self.blocked or self._aborted:
                 continue
-            self._check_and_emit(sentence)
+            try:
+                self._check_and_emit(sentence)
+            except Exception:
+                # 안전 필터 호출 자체가 실패(네트워크 오류 등)하면 판정 불가다.
+                # agents/safety.py 의 파싱 실패 처리와 같은 원칙으로 차단 쪽에 선다 -
+                # 여기서 예외를 흘리면 워커가 죽어 남은 문장이 조용히 사라진다.
+                self.blocked = True
+                self.violations = ["safety_check_failed"]
 
     def _check_and_emit(self, sentence: str) -> None:
         result = check_safety(sentence)
