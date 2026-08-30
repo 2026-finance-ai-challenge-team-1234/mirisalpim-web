@@ -1784,7 +1784,8 @@ class StartTrainingWithBodyTests(TestCase):
 
     def test_track_without_scenario_is_rejected(self):
         """프론트가 고른 값도 서버가 다시 확인한다."""
-        response = self.start(category="voice", trackId="T06-2")
+        Scenario.objects.filter(category="voice", track="T01-1").delete()
+        response = self.start(category="voice", trackId="T01-1")
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"]["code"], "SCENARIO_NOT_AVAILABLE")
