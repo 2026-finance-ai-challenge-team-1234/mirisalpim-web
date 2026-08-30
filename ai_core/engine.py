@@ -158,7 +158,13 @@ def step(
 
     if use_safety:
         gate = StreamingSafetyGate(downstream=on_delta)
-        result = generate_scammer_turn(scenario, state, gate.feed)
+        try:
+            result = generate_scammer_turn(scenario, state, gate.feed)
+        except BaseException:
+            # 생성이 실패하면 게이트 워커를 정리하고 예외를 그대로 올린다.
+            # 이게 없으면 워커가 큐에서 영원히 대기해 실패한 턴마다 스레드가 샌다.
+            gate.close()
+            raise
         gate.finish()
         usage.add(result.usage)
         usage.add(gate.usage)
