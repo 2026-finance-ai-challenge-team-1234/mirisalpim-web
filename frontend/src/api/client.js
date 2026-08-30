@@ -29,8 +29,11 @@ export function newIdempotencyKey() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-async function request(path, { method = "GET", body, idempotencyKey } = {}) {
-  const headers = { "Content-Type": "application/json" };
+async function request(
+  path,
+  { method = "GET", body, rawBody, contentType = "application/json", idempotencyKey } = {},
+) {
+  const headers = { "Content-Type": contentType };
 
   // GET 등 안전한 메서드가 아니면 CSRF 토큰 첨부
   if (method !== "GET") {
@@ -44,7 +47,7 @@ async function request(path, { method = "GET", body, idempotencyKey } = {}) {
     method,
     credentials: "same-origin",
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: rawBody ?? (body ? JSON.stringify(body) : undefined),
   });
 
   const data = await res.json().catch(() => null);
@@ -68,3 +71,5 @@ async function request(path, { method = "GET", body, idempotencyKey } = {}) {
 export const apiGet = (path) => request(path, { method: "GET" });
 export const apiPost = (path, body, options = {}) =>
   request(path, { method: "POST", body, ...options });
+export const apiPostRaw = (path, rawBody, options = {}) =>
+  request(path, { method: "POST", rawBody, ...options });
