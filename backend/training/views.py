@@ -3,6 +3,7 @@ import json
 import logging
 import random
 import threading
+import time
 import uuid
 
 from ai_core.engine import Engine, load_scenario, start_session, step
@@ -50,6 +51,9 @@ MAX_INPUT_CHARS = 200
 
 #: 한 턴 처리 제한 시간 (API 설계 9절). 넘으면 AI_TIMEOUT.
 TURN_TIMEOUT_SECONDS = 60
+
+#: 문장 하나의 TTS 제한. 음성은 선택 기능이므로 지연돼도 턴 저장과 자막을 막지 않는다.
+TTS_TIMEOUT_SECONDS = 15
 
 #: 업로드 음성 상한. 한 턴 발화는 길어야 30초 남짓이고, webm/opus 30초가 대략
 #: 250KB 다. 넉넉히 잡되 무제한으로 두지 않는다.
@@ -565,42 +569,9 @@ def submit_turn_audio(request, session_id):
     텍스트 경로(submit_turn)와 응답 모양이 같고 userText 만 더 있다 - 화면이
     "내가 말한 내용"을 보여줄 수 있어야 하기 때문이다.
     """
-    anon_client_id = ensure_anon_client_id(request.session)
-
-    retry_after = turn_rate_exceeded(anon_client_id)
-    if retry_after is not None:
-        return error_response(
-            "RATE_LIMITED", "요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.", 429,
-            headers={"Retry-After": str(retry_after)},
-        )
-
-    audio = request.body
-    if not audio:
-        return error_response("EMPTY_AUDIO", "녹음된 음성이 없습니다.", 400)
-    if len(audio) > MAX_AUDIO_BYTES:
-        return error_response("AUDIO_TOO_LARGE", "녹음이 너무 깁니다.", 413)
-
-    try:
-        sample_rate = int(request.GET.get("sampleRate", 48000))
-    except ValueError:
-        return error_response("INVALID_SAMPLE_RATE", "잘못된 샘플레이트입니다.", 400)
-
-    try:
-        text = transcribe(audio, sample_rate)
-    except VoiceUnavailable:
-        return error_response(
-            "VOICE_UNAVAILABLE", "음성 기능을 사용할 수 없습니다.", 503
-        )
-    except Exception:
-        logger.exception("stt 실패")
-        return error_response("STT_ERROR", "음성을 알아듣지 못했습니다.", 502)
-
-    if not text.strip():
-        return error_response(
-            "NO_SPEECH_DETECTED", "말씀하신 내용을 알아듣지 못했어요. 다시 말씀해 주세요.", 400
-        )
-    if len(text) > MAX_INPUT_CHARS:
-        text = text[:MAX_INPUT_CHARS]
+    text, anon_client_id, failure = _transcribe_audio_request(request)
+    if failure is not None:
+        return failure
 
     context, failure = _open_turn(session_id, anon_client_id)
     if failure is not None:
@@ -635,6 +606,62 @@ def submit_turn_audio(request, session_id):
             "endReason": outcome.end_reason,
         }
     )
+
+
+def _transcribe_audio_request(request):
+    """음성 턴의 공통 검증과 STT를 수행한다.
+
+    동기·스트리밍 경로가 입력 제한, 속도 제한, 오류 코드를 완전히 동일하게 유지하도록
+    한 곳에 둔다. 원본 오디오는 이 함수 밖으로 반환하지 않아 요청 처리 후 폐기된다.
+    """
+    anon_client_id = ensure_anon_client_id(request.session)
+
+    retry_after = turn_rate_exceeded(anon_client_id)
+    if retry_after is not None:
+        return None, None, error_response(
+            "RATE_LIMITED",
+            "요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.",
+            429,
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    audio = request.body
+    if not audio:
+        return None, None, error_response(
+            "EMPTY_AUDIO", "녹음된 음성이 없습니다.", 400
+        )
+    if len(audio) > MAX_AUDIO_BYTES:
+        return None, None, error_response(
+            "AUDIO_TOO_LARGE", "녹음이 너무 깁니다.", 413
+        )
+
+    try:
+        sample_rate = int(request.GET.get("sampleRate", 48000))
+    except ValueError:
+        return None, None, error_response(
+            "INVALID_SAMPLE_RATE", "잘못된 샘플레이트입니다.", 400
+        )
+
+    try:
+        text = transcribe(audio, sample_rate)
+    except VoiceUnavailable:
+        return None, None, error_response(
+            "VOICE_UNAVAILABLE", "음성 기능을 사용할 수 없습니다.", 503
+        )
+    except Exception:
+        logger.exception("stt 실패")
+        return None, None, error_response(
+            "STT_ERROR", "음성을 알아듣지 못했습니다.", 502
+        )
+
+    text = text.strip()
+    if not text:
+        return None, None, error_response(
+            "NO_SPEECH_DETECTED",
+            "말씀하신 내용을 알아듣지 못했어요. 다시 말씀해 주세요.",
+            400,
+        )
+    return text[:MAX_INPUT_CHARS], anon_client_id, None
 
 
 @require_POST
@@ -853,11 +880,57 @@ def turn_stream(request, session_id):
 
     masked_text, detected_pii = mask_pii(text)
 
-    response = StreamingHttpResponse(
+    response = _streaming_response(
         _turn_events(
-            session_id, anon_client_id, scenario, state, loaded_turn,
-            masked_text, detected_pii,
-        ),
+            session_id,
+            anon_client_id,
+            scenario,
+            state,
+            loaded_turn,
+            masked_text,
+            detected_pii,
+        )
+    )
+    return response
+
+
+@require_POST
+def turn_audio_stream(request, session_id):
+    """음성 입력을 STT한 뒤 승인된 문장과 TTS를 SSE로 순차 전송한다.
+
+    기존 submit_turn_audio는 동기식 폴백으로 남긴다. 이 경로는 첫 문장을 전부 생성할
+    때까지 기다리지 않고, 안전 게이트가 승인한 문장부터 자막(delta)과 음성(audio)을
+    내보낸다. 문장 TTS가 도는 동안 AI 코어 워커는 다음 문장을 계속 생성한다.
+    """
+    text, anon_client_id, failure = _transcribe_audio_request(request)
+    if failure is not None:
+        return failure
+
+    context, failure = _open_turn(session_id, anon_client_id)
+    if failure is not None:
+        return failure
+    scenario, state, loaded_turn = context
+
+    masked_text, detected_pii = mask_pii(text)
+    return _streaming_response(
+        _turn_events(
+            session_id,
+            anon_client_id,
+            scenario,
+            state,
+            loaded_turn,
+            masked_text,
+            detected_pii,
+            include_audio=True,
+            user_text=masked_text,
+        )
+    )
+
+
+def _streaming_response(events):
+    """SSE 응답의 프록시 버퍼링 방지 헤더를 한 곳에서 보장한다."""
+    response = StreamingHttpResponse(
+        events,
         content_type="text/event-stream; charset=utf-8",
     )
     response["Cache-Control"] = "no-store"
@@ -867,9 +940,21 @@ def turn_stream(request, session_id):
 
 
 async def _turn_events(
-    session_id, anon_client_id, scenario, state, loaded_turn, masked_text, detected_pii
+    session_id,
+    anon_client_id,
+    scenario,
+    state,
+    loaded_turn,
+    masked_text,
+    detected_pii,
+    *,
+    include_audio=False,
+    user_text=None,
 ):
-    yield _sse("accepted", {"turnNo": loaded_turn + 1})
+    accepted = {"turnNo": loaded_turn + 1}
+    if user_text is not None:
+        accepted["userText"] = user_text
+    yield _sse("accepted", accepted)
 
     # 정규식으로 잡은 개인정보는 LLM 을 기다릴 필요가 없다 - 즉시 개입한다 (F-14).
     pii_warnings = _risk_warnings(detected_pii)
@@ -896,6 +981,7 @@ async def _turn_events(
         except Exception as exc:  # 모델 오류·타임아웃 등
             box["error"] = exc
         finally:
+            box["finished_at"] = time.monotonic()
             # 이 스레드가 DB 를 쓸 일은 없지만, 썼다면 커넥션을 여기서 반납한다.
             connections.close_all()
             loop.call_soon_threadsafe(deltas.put_nowait, _STREAM_END)
@@ -903,22 +989,59 @@ async def _turn_events(
     worker = threading.Thread(target=run_turn, daemon=True)
     worker.start()
 
-    deadline = loop.time() + TURN_TIMEOUT_SECONDS
+    deadline = time.monotonic() + TURN_TIMEOUT_SECONDS
+    sequence = 0
+    audio_complete = True
     while True:
-        remaining = deadline - loop.time()
+        remaining = deadline - time.monotonic()
         if remaining <= 0:
-            yield _sse("error", {"code": "AI_TIMEOUT", "message": "응답이 지연되고 있습니다."})
-            return
-        try:
-            item = await asyncio.wait_for(deltas.get(), timeout=remaining)
-        except (asyncio.TimeoutError, TimeoutError):
-            # 워커는 daemon 이라 두고 끝낸다. 저장하지 않으므로 세션은 그대로다.
-            yield _sse("error", {"code": "AI_TIMEOUT", "message": "응답이 지연되고 있습니다."})
-            return
+            # AI는 제한 안에 끝났지만 문장별 TTS 때문에 큐 소비만 늦어진 경우에는
+            # 남은 결과를 계속 내보낸다. 선택 기능인 TTS가 턴 저장을 취소하면 안 된다.
+            if box.get("finished_at", float("inf")) <= deadline:
+                item = deltas.get_nowait()
+            else:
+                yield _sse(
+                    "error",
+                    {"code": "AI_TIMEOUT", "message": "응답이 지연되고 있습니다."},
+                )
+                return
+        else:
+            try:
+                item = await asyncio.wait_for(deltas.get(), timeout=remaining)
+            except (asyncio.TimeoutError, TimeoutError):
+                # 워커는 daemon 이라 두고 끝낸다. 저장하지 않으므로 세션은 그대로다.
+                yield _sse(
+                    "error",
+                    {"code": "AI_TIMEOUT", "message": "응답이 지연되고 있습니다."},
+                )
+                return
         if item is _STREAM_END:
             break
         # 안전 필터를 통과한 문장만 여기 도착한다 (StreamingSafetyGate).
-        yield _sse("delta", {"text": item})
+        sequence += 1
+        yield _sse("delta", {"sequence": sequence, "text": item})
+        if include_audio:
+            # 동기 Google TTS 호출은 이벤트 루프 밖에서 실행한다. 기다리는 동안에도
+            # AI 코어 워커는 다음 문장을 생성·검사해 deltas 큐에 쌓을 수 있다.
+            try:
+                audio = await asyncio.wait_for(
+                    asyncio.to_thread(_voice_audio, scenario, item),
+                    timeout=TTS_TIMEOUT_SECONDS,
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                logger.warning("tts 시간 초과 - sequence=%s", sequence)
+                audio = None
+            if audio:
+                yield _sse(
+                    "audio",
+                    {
+                        "sequence": sequence,
+                        "mimeType": "audio/mpeg",
+                        "audio": audio,
+                    },
+                )
+            else:
+                audio_complete = False
     await asyncio.to_thread(worker.join)
 
     if "error" in box:
@@ -945,15 +1068,15 @@ async def _turn_events(
         )
         return
 
-    yield _sse(
-        "done",
-        {
-            "turnNo": state.turn,
-            "text": outcome.scammer_text,
-            "ended": outcome.ended,
-            "endReason": outcome.end_reason,
-        },
-    )
+    done = {
+        "turnNo": state.turn,
+        "text": outcome.scammer_text,
+        "ended": outcome.ended,
+        "endReason": outcome.end_reason,
+    }
+    if include_audio:
+        done["audioComplete"] = audio_complete
+    yield _sse("done", done)
 
 
 def _commit_turn_in_worker(session_id, anon_client_id, loaded_turn, state, outcome):

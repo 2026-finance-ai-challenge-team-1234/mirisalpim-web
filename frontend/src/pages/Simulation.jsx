@@ -4,6 +4,7 @@ import PageHeader from "../components/PageHeader";
 import {
   startTrainingSession,
   sendAudioTurn,
+  sendAudioTurnStream,
   sendTurn,
   submitJudgment,
 } from "../api/trainingApi";
@@ -143,7 +144,10 @@ export default function Simulation() {
   const mountedRef = useRef(true);
   const speakerOnRef = useRef(true);
   const audioPlayerRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const playNextAudioRef = useRef(null);
   const latestAudioRef = useRef(null);
+  const streamAbortRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -152,11 +156,68 @@ export default function Simulation() {
   const shouldSubmitRecordingRef = useRef(false);
 
   const stopAudioPlayback = useCallback(() => {
+    audioQueueRef.current = [];
     const player = audioPlayerRef.current;
-    if (!player) return;
-    player.pause();
-    player.removeAttribute("src");
+    if (player) {
+      player.onended = null;
+      player.onerror = null;
+      player.pause();
+      player.removeAttribute("src");
+    }
     audioPlayerRef.current = null;
+  }, []);
+
+  const playNextQueuedAudio = useCallback(() => {
+    if (!speakerOnRef.current) {
+      audioQueueRef.current = [];
+      audioPlayerRef.current = null;
+      return;
+    }
+
+    const base64Audio = audioQueueRef.current.shift();
+    if (!base64Audio) {
+      audioPlayerRef.current = null;
+      return;
+    }
+
+    const player = new Audio(`data:audio/mpeg;base64,${base64Audio}`);
+    audioPlayerRef.current = player;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (audioPlayerRef.current === player) audioPlayerRef.current = null;
+      playNextAudioRef.current?.();
+    };
+    player.onended = finish;
+    player.onerror = () => {
+      setAudioNotice("일부 음성을 재생하지 못해 자막으로 계속 진행하고 있어요.");
+      finish();
+    };
+    player.play().then(() => setAudioNotice(null)).catch((err) => {
+      console.warn("[Simulation] 오디오 자동 재생 차단:", err);
+      settled = true;
+      player.onended = null;
+      player.onerror = null;
+      audioQueueRef.current = [];
+      audioPlayerRef.current = null;
+      setAudioNotice("자동 재생이 차단됐어요. 스피커를 껐다 켜면 다시 들을 수 있어요.");
+    });
+  }, []);
+
+  useEffect(() => {
+    playNextAudioRef.current = playNextQueuedAudio;
+    return () => {
+      playNextAudioRef.current = null;
+    };
+  }, [playNextQueuedAudio]);
+
+  const enqueueServerAudio = useCallback((base64Audio) => {
+    if (!base64Audio) return;
+    latestAudioRef.current = base64Audio;
+    if (!speakerOnRef.current) return;
+    audioQueueRef.current.push(base64Audio);
+    if (!audioPlayerRef.current) playNextAudioRef.current?.();
   }, []);
 
   const playServerAudio = useCallback(
@@ -169,12 +230,8 @@ export default function Simulation() {
       if (!force && !speakerOnRef.current) return;
 
       stopAudioPlayback();
-      const player = new Audio(`data:audio/mpeg;base64,${base64Audio}`);
-      audioPlayerRef.current = player;
-      player.play().then(() => setAudioNotice(null)).catch((err) => {
-        console.warn("[Simulation] 오디오 자동 재생 차단:", err);
-        setAudioNotice("자동 재생이 차단됐어요. 스피커를 껐다 켜면 다시 들을 수 있어요.");
-      });
+      audioQueueRef.current.push(base64Audio);
+      playNextAudioRef.current?.();
     },
     [stopAudioPlayback],
   );
@@ -209,6 +266,7 @@ export default function Simulation() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      streamAbortRef.current?.abort();
       shouldSubmitRecordingRef.current = false;
       clearTimeout(recordingTimeoutRef.current);
       if (mediaRecorderRef.current?.state !== "inactive") {
@@ -283,18 +341,122 @@ export default function Simulation() {
     setWaiting(true);
     setError(null);
 
+    const requestId = newIdempotencyKey();
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    let accepted = false;
+    let botStarted = false;
+    let streamedText = "";
+    let receivedAudio = false;
+
     try {
-      const data = await sendAudioTurn(
+      await sendAudioTurnStream(
         sessionId,
         audioBlob,
         sampleRate,
-        newIdempotencyKey(),
+        {
+          idempotencyKey: requestId,
+          signal: controller.signal,
+          onEvent: (event, data) => {
+            if (!mountedRef.current) return;
+
+            if (event === "accepted") {
+              accepted = true;
+              if (data.userText) {
+                setChatHistory((prev) => [
+                  ...prev,
+                  { sender: "user", text: data.userText, requestId },
+                ]);
+              }
+              return;
+            }
+
+            if (event === "riskWarning") {
+              setRiskWarning(data);
+              return;
+            }
+
+            if (event === "delta") {
+              streamedText += data.text || "";
+              const firstBotDelta = !botStarted;
+              botStarted = true;
+              setChatHistory((prev) => {
+                if (firstBotDelta) {
+                  return [
+                    ...prev,
+                    { sender: "bot", text: streamedText, requestId },
+                  ];
+                }
+                return prev.map((item) =>
+                  item.requestId === requestId && item.sender === "bot"
+                    ? { ...item, text: streamedText }
+                    : item,
+                );
+              });
+              return;
+            }
+
+            if (event === "audio") {
+              receivedAudio = true;
+              enqueueServerAudio(data.audio);
+              return;
+            }
+
+            if (event === "done") {
+              const finalText = data.text || streamedText;
+              setChatHistory((prev) => {
+                const hasBot = prev.some(
+                  (item) => item.requestId === requestId && item.sender === "bot",
+                );
+                if (!hasBot && finalText) {
+                  return [...prev, { sender: "bot", text: finalText, requestId }];
+                }
+                return prev.map((item) =>
+                  item.requestId === requestId && item.sender === "bot"
+                    ? { ...item, text: finalText }
+                    : item,
+                );
+              });
+              setTurnNo((current) => data.turnNo ?? current + 1);
+              if (!receivedAudio) {
+                setAudioNotice("음성을 재생할 수 없어 화면에 자막을 표시하고 있어요.");
+              } else if (data.audioComplete === false) {
+                setAudioNotice("일부 음성을 재생하지 못해 자막으로 계속 진행하고 있어요.");
+              }
+              if (data.ended) {
+                setEnded(true);
+                setShowJudgment(true);
+              }
+            }
+          },
+        },
       );
-      applyTurnResult(data, data.userText);
     } catch (err) {
-      console.error("[Simulation] 음성 턴 처리 실패:", err);
-      setError(describeError(err));
+      let requestError = err;
+      // 이전 버전 백엔드와 섞여 배포돼 새 URL 자체가 없을 때만 동기 경로를 쓴다.
+      // 스트림이 시작된 뒤 재요청하면 같은 턴이 중복될 수 있으므로 폴백하지 않는다.
+      if (!accepted && err?.status === 404 && err?.code === "UNKNOWN") {
+        try {
+          const data = await sendAudioTurn(
+            sessionId,
+            audioBlob,
+            sampleRate,
+            requestId,
+          );
+          applyTurnResult(data, data.userText);
+          return;
+        } catch (fallbackError) {
+          requestError = fallbackError;
+        }
+      }
+
+      stopAudioPlayback();
+      setChatHistory((prev) => prev.filter((item) => item.requestId !== requestId));
+      if (requestError?.name === "AbortError") return;
+      console.error("[Simulation] 음성 턴 처리 실패:", requestError);
+      setError(describeError(requestError));
     } finally {
+      if (streamAbortRef.current === controller) streamAbortRef.current = null;
       if (mountedRef.current) setWaiting(false);
     }
   };

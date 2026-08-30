@@ -73,3 +73,96 @@ export const apiPost = (path, body, options = {}) =>
   request(path, { method: "POST", body, ...options });
 export const apiPostRaw = (path, rawBody, options = {}) =>
   request(path, { method: "POST", rawBody, ...options });
+
+function parseSseBlock(block) {
+  let event = "message";
+  const dataLines = [];
+
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+  }
+
+  if (!dataLines.length) return null;
+  try {
+    return { event, data: JSON.parse(dataLines.join("\n")) };
+  } catch {
+    throw new ApiError("INVALID_STREAM", "실시간 응답 형식이 올바르지 않습니다.");
+  }
+}
+
+// EventSource는 POST 본문을 보낼 수 없으므로 fetch의 ReadableStream으로 SSE를 읽는다.
+// ReadableStream을 지원하지 않는 브라우저도 응답 전체를 받은 뒤 같은 파서로 처리한다.
+export async function apiPostRawSse(
+  path,
+  rawBody,
+  { contentType = "application/octet-stream", idempotencyKey, signal, onEvent } = {},
+) {
+  const headers = { "Content-Type": contentType, Accept: "text/event-stream" };
+  const csrfToken = getCookie("csrftoken");
+  if (csrfToken) headers["X-CSRFToken"] = csrfToken;
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers,
+    body: rawBody,
+    signal,
+  });
+
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const err = payload?.error;
+    const apiError = new ApiError(
+      err?.code || "UNKNOWN",
+      err?.message || "요청 처리 중 문제가 발생했습니다.",
+      err?.details,
+    );
+    apiError.status = res.status;
+    apiError.retryAfter = res.headers.get("Retry-After");
+    throw apiError;
+  }
+
+  const emitBlocks = async (text, flush = false) => {
+    let normalized = text.replace(/\r\n/g, "\n");
+    const blocks = normalized.split("\n\n");
+    const remainder = flush ? "" : blocks.pop();
+    if (flush && blocks.at(-1) === "") blocks.pop();
+
+    for (const block of blocks) {
+      if (!block.trim()) continue;
+      const parsed = parseSseBlock(block);
+      if (parsed) await onEvent?.(parsed.event, parsed.data);
+    }
+    if (flush && remainder?.trim()) {
+      const parsed = parseSseBlock(remainder);
+      if (parsed) await onEvent?.(parsed.event, parsed.data);
+    }
+    return remainder || "";
+  };
+
+  if (!res.body?.getReader) {
+    await emitBlocks(await res.text(), true);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      buffer = await emitBlocks(buffer);
+    }
+    buffer += decoder.decode();
+    await emitBlocks(buffer, true);
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
