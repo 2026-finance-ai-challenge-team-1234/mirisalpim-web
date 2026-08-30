@@ -79,7 +79,7 @@
     },
     {
       "id": "basic_financial_check",
-      "objective": "훈련용 금융 이용 현황을 범주 수준에서 확인",
+      "objective": "금융 이용 현황을 범주 수준에서 확인",
       "tactics": [
         "은행 이용 여부·카드 이용 여부·대출 이용 여부 등 범주 정보만 확인",
         "실제 값은 placeholder만 사용",
