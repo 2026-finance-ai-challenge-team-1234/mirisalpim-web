@@ -1,155 +1,30 @@
 {
-  "schema_version": 1,
-  "scenario_id": "sc-38",
   "category": "voice",
-  "track": "T05-4",
-  "target_tracks": [
-    "young",
-    "middle_age"
+  "debrief_points": [
+    "지원하지 않은 곳의 합격 통보는 의심하세요",
+    "체크카드나 통장 실물을 요구하는 회사는 없습니다",
+    "회사명과 사업자등록번호를 먼저 확인하세요"
   ],
-  "title": "채용 합격 통보 — 입사 절차를 빙자한 개인정보 수집",
-  "source": "경찰청 전기통신금융사기 통합신고대응센터·금융감독원 공개 예방자료를 바탕으로 재구성한 훈련 시나리오",
-  "source_refs": [
-    "https://www.counterscam112.go.kr/",
-    "https://www.fss.or.kr/fss/bbs/B0000203/list.do?menuNo=200686"
-  ],
-  "source_review_status": "auto_labeled",
-  "is_scam": true,
   "difficulty": 2,
-  "goal": "훈련생이 합격했다고 믿고 입사 서류 명목으로 신원과 금융정보를 넘기도록 만든다",
-  "learning_objectives": [
-    "훈련생이 '채용 합격 사칭' 유형의 초기 미끼를 판별하는지 평가",
-    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
-    "훈련생이 개인정보·금융정보·앱 설치·송금 등 민감 행동 요구를 거부하는지 평가"
-  ],
-  "max_turns": 18,
-  "persona": {
-    "display_name": "인사팀 담당자",
-    "name": "조은채",
-    "org": "한빛물류지원",
-    "role": "상담 담당자",
-    "tone": "밝고 정중한 인사담당자 말투. 축하를 먼저 건넨다.",
-    "rules": [
-      "실제로 작동하는 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다. 필요하면 명백한 더미만 쓴다",
-      "한 번에 1~2문장으로 짧게 응답한다",
-      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
-    ],
-    "resistance_strategy": [
-      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
-      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
-    ],
-    "voice_preset": "formal_neutral"
-  },
-  "stages": [
-    {
-      "id": "opening",
-      "objective": "사칭 신분·상황을 제시하고 대화를 시작",
-      "tactics": [
-        "합격이라는 반가운 소식으로 경계를 낮춘다",
-        "지원한 적이 있는지는 확인하지 않는다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 연락 목적을 이해하거나 대화에 응함"
-      ],
-      "opening": "안녕하세요, 한빛물류지원 인사팀 조은채입니다. 지원해 주신 건 서류 전형 합격하셔서 안내드리려고 연락드렸습니다. 지금 통화 괜찮으실까요?"
-    },
-    {
-      "id": "context_check",
-      "objective": "훈련생의 상황 인식과 신뢰 정도 확인",
-      "tactics": [
-        "언제부터 근무 가능한지 확인한다",
-        "절차가 간단하다고 안심시킨다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 발신자의 설명을 받아들이거나 의심을 표현함"
-      ]
-    },
-    {
-      "id": "pressure_or_trust",
-      "objective": "권위·긴급성·관계 신뢰 중 해당 유형의 핵심 압박 신호 노출",
-      "tactics": [
-        "오늘 서류를 제출해야 자리가 확정된다고 말한다",
-        "대기자가 있다고 덧붙인다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 계속 응하거나 외부 확인을 시도함"
-      ]
-    },
-    {
-      "id": "risk_signal_exposure",
-      "objective": "민감 행동 요구가 나타나는 위험 지점을 대화 흐름 안에서 노출",
-      "tactics": [
-        "입사 서류라며 주민등록번호와 신분증 사진을 요구한다",
-        "급여 계좌 등록을 위해 통장 사본과 체크카드를 보내라고 한다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 거부·의심·독립 확인 또는 수용 의사를 보임"
-      ]
-    },
-    {
-      "id": "termination",
-      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
-      "tactics": [
-        "실제 주민등록번호·신분증·계좌정보는 수집하지 않는다"
-      ],
-      "min_turns": 1,
-      "advance_when": [
-        "훈련 성공 또는 종료 조건 충족"
-      ]
-    }
-  ],
-  "tell_points": [
-    {
-      "id": "tp1",
-      "stage": "opening",
-      "signal_type": "risk",
-      "trigger": "지원한 기억이 없는 회사에서 합격 통보가 옴",
-      "why": "지원하지 않은 곳에서 오는 합격 통보는 개인정보 수집이 목적입니다.",
-      "weight": 3,
-      "first_detectable_turn": 1
-    },
-    {
-      "id": "tp2",
-      "stage": "pressure_or_trust",
-      "signal_type": "risk",
-      "trigger": "입사 전에 신분증 사진과 통장 사본을 요구함",
-      "why": "정식 입사 서류는 근로계약 시점에 회사에서 직접 제출합니다. 전화로 먼저 받지 않습니다.",
-      "weight": 3,
-      "first_detectable_turn": 9
-    },
-    {
-      "id": "tp3",
-      "stage": "risk_signal_exposure",
-      "signal_type": "risk",
-      "trigger": "체크카드를 보내라고 요구함",
-      "why": "급여 지급에 실물 카드가 필요할 이유는 없습니다. 대포통장 수집입니다.",
-      "weight": 3,
-      "first_detectable_turn": 13
-    }
-  ],
   "end_conditions": [
     {
-      "id": "ec1",
       "condition": "훈련생이 상대가 알려준 수단이 아닌 공식 앱·홈페이지·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "id": "ec1",
       "result": "training_success"
     },
     {
-      "id": "ec2",
       "condition": "훈련생이 개인정보·금융정보·인증정보 제공, 링크 클릭, 앱 설치 또는 송금 요구를 명확히 거부함",
+      "id": "ec2",
       "result": "training_success"
     },
     {
-      "id": "ec3",
       "condition": "훈련생이 보이스피싱·스미싱 가능성을 인지하고 대화를 종료하겠다고 명확히 밝힘",
+      "id": "ec3",
       "result": "training_success"
     },
     {
-      "id": "ec4",
       "condition": "훈련생이 더 이상 대화하지 않겠다는 의사를 반복적으로 표현함",
+      "id": "ec4",
       "result": "terminate"
     }
   ],
@@ -163,9 +38,134 @@
     "실제 원격제어 접속 정보",
     "실존 개인의 신원 정보"
   ],
-  "debrief_points": [
-    "지원하지 않은 곳의 합격 통보는 의심하세요",
-    "체크카드나 통장 실물을 요구하는 회사는 없습니다",
-    "회사명과 사업자등록번호를 먼저 확인하세요"
-  ]
+  "goal": "훈련생이 합격했다고 믿고 입사 서류 명목으로 신원과 금융정보를 넘기도록 만든다",
+  "is_scam": true,
+  "learning_objectives": [
+    "훈련생이 '채용 합격 사칭' 유형의 초기 미끼를 판별하는지 평가",
+    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
+    "훈련생이 개인정보·금융정보·앱 설치·송금 등 민감 행동 요구를 거부하는지 평가"
+  ],
+  "max_turns": 18,
+  "persona": {
+    "display_name": "인사팀 담당자",
+    "name": "살핌",
+    "org": "살핌",
+    "resistance_strategy": [
+      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
+      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
+    ],
+    "role": "상담 담당자",
+    "rules": [
+      "실제로 작동하는 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다. 필요하면 명백한 더미만 쓴다",
+      "한 번에 1~2문장으로 짧게 응답한다",
+      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
+    ],
+    "tone": "밝고 정중한 인사담당자 말투. 축하를 먼저 건넨다.",
+    "voice_preset": "formal_neutral"
+  },
+  "scenario_id": "sc-38",
+  "schema_version": 1,
+  "source": "경찰청 전기통신금융사기 통합신고대응센터·금융감독원 공개 예방자료를 바탕으로 재구성한 훈련 시나리오",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/",
+    "https://www.fss.or.kr/fss/bbs/B0000203/list.do?menuNo=200686"
+  ],
+  "source_review_status": "auto_labeled",
+  "stages": [
+    {
+      "advance_when": [
+        "훈련생이 연락 목적을 이해하거나 대화에 응함"
+      ],
+      "id": "opening",
+      "min_turns": 2,
+      "objective": "사칭 신분·상황을 제시하고 대화를 시작",
+      "opening": "안녕하세요, 살핌 인사팀 살핌입니다. 지원해 주신 건 서류 전형 합격하셔서 안내드리려고 연락드렸습니다. 지금 통화 괜찮으실까요?",
+      "tactics": [
+        "합격이라는 반가운 소식으로 경계를 낮춘다",
+        "지원한 적이 있는지는 확인하지 않는다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 발신자의 설명을 받아들이거나 의심을 표현함"
+      ],
+      "id": "context_check",
+      "min_turns": 2,
+      "objective": "훈련생의 상황 인식과 신뢰 정도 확인",
+      "tactics": [
+        "언제부터 근무 가능한지 확인한다",
+        "절차가 간단하다고 안심시킨다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 계속 응하거나 외부 확인을 시도함"
+      ],
+      "id": "pressure_or_trust",
+      "min_turns": 2,
+      "objective": "권위·긴급성·관계 신뢰 중 해당 유형의 핵심 압박 신호 노출",
+      "tactics": [
+        "오늘 서류를 제출해야 자리가 확정된다고 말한다",
+        "대기자가 있다고 덧붙인다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 거부·의심·독립 확인 또는 수용 의사를 보임"
+      ],
+      "id": "risk_signal_exposure",
+      "min_turns": 2,
+      "objective": "민감 행동 요구가 나타나는 위험 지점을 대화 흐름 안에서 노출",
+      "tactics": [
+        "입사 서류라며 주민등록번호와 신분증 사진을 요구한다",
+        "급여 계좌 등록을 위해 통장 사본과 체크카드를 보내라고 한다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련 성공 또는 종료 조건 충족"
+      ],
+      "id": "termination",
+      "min_turns": 1,
+      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
+      "tactics": [
+        "실제 주민등록번호·신분증·계좌정보는 수집하지 않는다"
+      ]
+    }
+  ],
+  "target_tracks": [
+    "young",
+    "middle_age"
+  ],
+  "tell_points": [
+    {
+      "first_detectable_turn": 1,
+      "id": "tp1",
+      "signal_type": "risk",
+      "stage": "opening",
+      "trigger": "지원한 기억이 없는 회사에서 합격 통보가 옴",
+      "weight": 3,
+      "why": "지원하지 않은 곳에서 오는 합격 통보는 개인정보 수집이 목적입니다."
+    },
+    {
+      "first_detectable_turn": 9,
+      "id": "tp2",
+      "signal_type": "risk",
+      "stage": "pressure_or_trust",
+      "trigger": "입사 전에 신분증 사진과 통장 사본을 요구함",
+      "weight": 3,
+      "why": "정식 입사 서류는 근로계약 시점에 회사에서 직접 제출합니다. 전화로 먼저 받지 않습니다."
+    },
+    {
+      "first_detectable_turn": 13,
+      "id": "tp3",
+      "signal_type": "risk",
+      "stage": "risk_signal_exposure",
+      "trigger": "체크카드를 보내라고 요구함",
+      "weight": 3,
+      "why": "급여 지급에 실물 카드가 필요할 이유는 없습니다. 대포통장 수집입니다."
+    }
+  ],
+  "title": "채용 합격 통보 — 입사 절차를 빙자한 개인정보 수집",
+  "track": "T05-4"
 }

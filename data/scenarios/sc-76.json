@@ -1,157 +1,30 @@
 {
-  "schema_version": 1,
-  "scenario_id": "sc-76",
   "category": "smishing",
-  "track": "S03-4",
-  "target_tracks": [
-    "teen",
-    "young",
-    "middle_age",
-    "senior"
+  "debrief_points": [
+    "환불은 결제한 수단으로 돌아옵니다 — 계좌를 새로 요구하면 사기입니다",
+    "돈을 준다면서 비밀번호를 묻는 곳은 없습니다",
+    "주문 내역은 쇼핑몰 앱에서 직접 확인하세요"
   ],
-  "title": "쇼핑몰 사칭 문자 — 환불 실패를 이유로 계좌 재등록 유도",
-  "source": "KISA 보호나라·경찰청 공개 스미싱 예방자료를 바탕으로 재구성한 훈련 시나리오",
-  "source_refs": [
-    "https://www.boho.or.kr/",
-    "https://www.counterscam112.go.kr/"
-  ],
-  "source_review_status": "auto_labeled",
-  "is_scam": true,
   "difficulty": 2,
-  "goal": "훈련생이 환불을 받으려고 링크에서 계좌와 신원 정보를 등록하도록 만든다",
-  "learning_objectives": [
-    "훈련생이 '반품·환불' 유형의 초기 미끼를 판별하는지 평가",
-    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
-    "훈련생이 문자 내부 링크·앱·정보입력 요구를 즉시 따르지 않는지 평가"
-  ],
-  "max_turns": 16,
-  "persona": {
-    "display_name": "고객만족팀",
-    "name": "",
-    "org": "온마켓",
-    "role": "문자 발신자",
-    "tone": "정중한 상담 투. 사과를 앞세워 신뢰를 만든다.",
-    "rules": [
-      "실제로 작동하는 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다. 필요하면 명백한 더미만 쓴다",
-      "한 번에 1~2문장으로 짧게 응답한다",
-      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
-    ],
-    "resistance_strategy": [
-      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
-      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
-    ],
-    "voice_preset": "text_only"
-  },
-  "stages": [
-    {
-      "id": "opening",
-      "objective": "미끼 메시지를 보내 대화를 시작",
-      "tactics": [
-        "돌려받을 돈이 있다는 이득을 앞세운다",
-        "쇼핑몰의 실수인 것처럼 사과한다"
-      ],
-      "min_turns": 1,
-      "advance_when": [
-        "훈련생이 메시지에 반응하거나 내용을 확인하려 함"
-      ],
-      "opening": "[온마켓] 반품 접수 건 환불이 계좌 오류로 실패했습니다. 계좌 재등록 후 즉시 처리됩니다. https://onmarket-refund.example/rf"
-    },
-    {
-      "id": "context_check",
-      "objective": "훈련생이 메시지를 실제 상황으로 받아들이는지 확인",
-      "tactics": [
-        "최근 반품이나 취소 이력이 있는지 확인한다",
-        "재등록이 늦으면 환불이 이월된다고 말한다"
-      ],
-      "min_turns": 1,
-      "advance_when": [
-        "훈련생이 발신자 주장에 응답함"
-      ]
-    },
-    {
-      "id": "risk_signal_exposure",
-      "objective": "핵심 위험 신호를 노출하되 실제 실행 정보는 제공하지 않음",
-      "tactics": [
-        "환불 계좌 등록이라며 계좌번호와 예금주 주민등록번호를 입력하게 한다",
-        "계좌 인증을 위해 뱅킹 비밀번호를 요구한다"
-      ],
-      "min_turns": 1,
-      "advance_when": [
-        "훈련생이 링크·앱·정보입력에 동의하거나 거부함"
-      ]
-    },
-    {
-      "id": "suspicion_handling",
-      "objective": "의심 또는 독립 확인 시도를 평가",
-      "tactics": [
-        "쇼핑몰 앱에서 확인하겠다고 하면 반영이 늦다고 미룬다",
-        "실존 쇼핑몰의 실제 번호는 제시하지 않는다"
-      ],
-      "min_turns": 1,
-      "advance_when": [
-        "훈련생이 공식 채널 재확인 의사를 밝히거나 계속 진행함"
-      ]
-    },
-    {
-      "id": "termination",
-      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
-      "tactics": [
-        "실제 계좌정보·인증정보는 수집하지 않는다"
-      ],
-      "min_turns": 1,
-      "advance_when": [
-        "훈련 성공 또는 종료 조건 충족"
-      ]
-    }
-  ],
-  "tell_points": [
-    {
-      "id": "tp1",
-      "stage": "opening",
-      "signal_type": "risk",
-      "trigger": "환불을 명분으로 문자 링크에서 계좌를 등록하게 함",
-      "why": "환불은 원래 결제수단으로 자동 처리됩니다. 계좌를 새로 등록하라는 요구 자체가 이상 신호입니다.",
-      "weight": 3,
-      "first_detectable_turn": 1
-    },
-    {
-      "id": "tp2",
-      "stage": "risk_signal_exposure",
-      "signal_type": "risk",
-      "trigger": "계좌 인증이라며 뱅킹 비밀번호를 요구함",
-      "why": "돈을 돌려주는 데 내 뱅킹 비밀번호가 필요할 이유는 없습니다.",
-      "weight": 3,
-      "first_detectable_turn": 5
-    },
-    {
-      "id": "tp3",
-      "stage": "suspicion_handling",
-      "signal_type": "risk",
-      "trigger": "쇼핑몰 앱 확인을 '반영이 늦다'며 미룸",
-      "why": "실제 환불 건이라면 주문 내역에 표시됩니다.",
-      "weight": 2,
-      "first_detectable_turn": 7
-    }
-  ],
   "end_conditions": [
     {
-      "id": "ec1",
       "condition": "훈련생이 상대가 알려준 수단이 아닌 공식 앱·홈페이지·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "id": "ec1",
       "result": "training_success"
     },
     {
-      "id": "ec2",
       "condition": "훈련생이 개인정보·금융정보·인증정보 제공, 링크 클릭, 앱 설치 또는 송금 요구를 명확히 거부함",
+      "id": "ec2",
       "result": "training_success"
     },
     {
-      "id": "ec3",
       "condition": "훈련생이 보이스피싱·스미싱 가능성을 인지하고 대화를 종료하겠다고 명확히 밝힘",
+      "id": "ec3",
       "result": "training_success"
     },
     {
-      "id": "ec4",
       "condition": "훈련생이 더 이상 대화하지 않겠다는 의사를 반복적으로 표현함",
+      "id": "ec4",
       "result": "terminate"
     }
   ],
@@ -165,9 +38,136 @@
     "실제 원격제어 접속 정보",
     "실존 개인의 신원 정보"
   ],
-  "debrief_points": [
-    "환불은 결제한 수단으로 돌아옵니다 — 계좌를 새로 요구하면 사기입니다",
-    "돈을 준다면서 비밀번호를 묻는 곳은 없습니다",
-    "주문 내역은 쇼핑몰 앱에서 직접 확인하세요"
-  ]
+  "goal": "훈련생이 환불을 받으려고 링크에서 계좌와 신원 정보를 등록하도록 만든다",
+  "is_scam": true,
+  "learning_objectives": [
+    "훈련생이 '반품·환불' 유형의 초기 미끼를 판별하는지 평가",
+    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
+    "훈련생이 문자 내부 링크·앱·정보입력 요구를 즉시 따르지 않는지 평가"
+  ],
+  "max_turns": 16,
+  "persona": {
+    "display_name": "고객만족팀",
+    "name": "",
+    "org": "살핌",
+    "resistance_strategy": [
+      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
+      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
+    ],
+    "role": "문자 발신자",
+    "rules": [
+      "실제로 작동하는 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다. 필요하면 명백한 더미만 쓴다",
+      "한 번에 1~2문장으로 짧게 응답한다",
+      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
+    ],
+    "tone": "정중한 상담 투. 사과를 앞세워 신뢰를 만든다.",
+    "voice_preset": "text_only"
+  },
+  "scenario_id": "sc-76",
+  "schema_version": 1,
+  "source": "KISA 보호나라·경찰청 공개 스미싱 예방자료를 바탕으로 재구성한 훈련 시나리오",
+  "source_refs": [
+    "https://www.boho.or.kr/",
+    "https://www.counterscam112.go.kr/"
+  ],
+  "source_review_status": "auto_labeled",
+  "stages": [
+    {
+      "advance_when": [
+        "훈련생이 메시지에 반응하거나 내용을 확인하려 함"
+      ],
+      "id": "opening",
+      "min_turns": 1,
+      "objective": "미끼 메시지를 보내 대화를 시작",
+      "opening": "[살핌] 반품 접수 건 환불이 계좌 오류로 실패했습니다. 계좌 재등록 후 즉시 처리됩니다. https://salpim-refund.example/rf",
+      "tactics": [
+        "돌려받을 돈이 있다는 이득을 앞세운다",
+        "쇼핑몰의 실수인 것처럼 사과한다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 발신자 주장에 응답함"
+      ],
+      "id": "context_check",
+      "min_turns": 1,
+      "objective": "훈련생이 메시지를 실제 상황으로 받아들이는지 확인",
+      "tactics": [
+        "최근 반품이나 취소 이력이 있는지 확인한다",
+        "재등록이 늦으면 환불이 이월된다고 말한다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 링크·앱·정보입력에 동의하거나 거부함"
+      ],
+      "id": "risk_signal_exposure",
+      "min_turns": 1,
+      "objective": "핵심 위험 신호를 노출하되 실제 실행 정보는 제공하지 않음",
+      "tactics": [
+        "환불 계좌 등록이라며 계좌번호와 예금주 주민등록번호를 입력하게 한다",
+        "계좌 인증을 위해 뱅킹 비밀번호를 요구한다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 공식 채널 재확인 의사를 밝히거나 계속 진행함"
+      ],
+      "id": "suspicion_handling",
+      "min_turns": 1,
+      "objective": "의심 또는 독립 확인 시도를 평가",
+      "tactics": [
+        "쇼핑몰 앱에서 확인하겠다고 하면 반영이 늦다고 미룬다",
+        "실존 쇼핑몰의 실제 번호는 제시하지 않는다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련 성공 또는 종료 조건 충족"
+      ],
+      "id": "termination",
+      "min_turns": 1,
+      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
+      "tactics": [
+        "실제 계좌정보·인증정보는 수집하지 않는다"
+      ]
+    }
+  ],
+  "target_tracks": [
+    "teen",
+    "young",
+    "middle_age",
+    "senior"
+  ],
+  "tell_points": [
+    {
+      "first_detectable_turn": 1,
+      "id": "tp1",
+      "signal_type": "risk",
+      "stage": "opening",
+      "trigger": "환불을 명분으로 문자 링크에서 계좌를 등록하게 함",
+      "weight": 3,
+      "why": "환불은 원래 결제수단으로 자동 처리됩니다. 계좌를 새로 등록하라는 요구 자체가 이상 신호입니다."
+    },
+    {
+      "first_detectable_turn": 5,
+      "id": "tp2",
+      "signal_type": "risk",
+      "stage": "risk_signal_exposure",
+      "trigger": "계좌 인증이라며 뱅킹 비밀번호를 요구함",
+      "weight": 3,
+      "why": "돈을 돌려주는 데 내 뱅킹 비밀번호가 필요할 이유는 없습니다."
+    },
+    {
+      "first_detectable_turn": 7,
+      "id": "tp3",
+      "signal_type": "risk",
+      "stage": "suspicion_handling",
+      "trigger": "쇼핑몰 앱 확인을 '반영이 늦다'며 미룸",
+      "weight": 2,
+      "why": "실제 환불 건이라면 주문 내역에 표시됩니다."
+    }
+  ],
+  "title": "쇼핑몰 사칭 문자 — 환불 실패를 이유로 계좌 재등록 유도",
+  "track": "S03-4"
 }

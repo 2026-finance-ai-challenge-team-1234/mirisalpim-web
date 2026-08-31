@@ -1,155 +1,30 @@
 {
-  "schema_version": 1,
-  "scenario_id": "sc-37",
   "category": "voice",
-  "track": "T05-3",
-  "target_tracks": [
-    "young",
-    "middle_age"
+  "debrief_points": [
+    "돈을 옮겨주는 일은 아르바이트가 아니라 범죄입니다",
+    "계좌나 체크카드를 넘기면 본인이 처벌받고 금융거래가 막힙니다",
+    "업무 내용을 설명하지 않는 채용은 응하지 마세요"
   ],
-  "title": "고수익 아르바이트 제안 — 단순 업무를 빙자한 계좌 이용",
-  "source": "경찰청 전기통신금융사기 통합신고대응센터·금융감독원 공개 예방자료를 바탕으로 재구성한 훈련 시나리오",
-  "source_refs": [
-    "https://www.counterscam112.go.kr/",
-    "https://www.fss.or.kr/fss/bbs/B0000203/list.do?menuNo=200686"
-  ],
-  "source_review_status": "auto_labeled",
-  "is_scam": true,
   "difficulty": 2,
-  "goal": "훈련생이 쉬운 부업이라고 믿고 본인 계좌를 자금 이동에 내주도록 만든다",
-  "learning_objectives": [
-    "훈련생이 '고수익 아르바이트 제안' 유형의 초기 미끼를 판별하는지 평가",
-    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
-    "훈련생이 개인정보·금융정보·앱 설치·송금 등 민감 행동 요구를 거부하는지 평가"
-  ],
-  "max_turns": 18,
-  "persona": {
-    "display_name": "채용 담당자",
-    "name": "민서준",
-    "org": "한빛물류지원",
-    "role": "상담 담당자",
-    "tone": "가볍고 친근한 말투. 부담 없다는 점을 반복한다.",
-    "rules": [
-      "실제로 작동하는 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다. 필요하면 명백한 더미만 쓴다",
-      "한 번에 1~2문장으로 짧게 응답한다",
-      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
-    ],
-    "resistance_strategy": [
-      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
-      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
-    ],
-    "voice_preset": "formal_neutral"
-  },
-  "stages": [
-    {
-      "id": "opening",
-      "objective": "사칭 신분·상황을 제시하고 대화를 시작",
-      "tactics": [
-        "짧은 시간과 높은 보수로 관심을 끈다",
-        "업무 내용은 아직 구체적으로 말하지 않는다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 연락 목적을 이해하거나 대화에 응함"
-      ],
-      "opening": "안녕하세요, 한빛물류지원 채용 담당 민서준입니다. 재택으로 하루 한두 시간이면 되는 업무가 있어서 연락드렸습니다. 지금 잠깐 말씀 나눌 수 있을까요?"
-    },
-    {
-      "id": "context_check",
-      "objective": "훈련생의 상황 인식과 신뢰 정도 확인",
-      "tactics": [
-        "현재 일을 하고 있는지, 시간이 되는지 확인한다",
-        "누구나 할 수 있는 단순 업무라고 안심시킨다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 발신자의 설명을 받아들이거나 의심을 표현함"
-      ]
-    },
-    {
-      "id": "pressure_or_trust",
-      "objective": "권위·긴급성·관계 신뢰 중 해당 유형의 핵심 압박 신호 노출",
-      "tactics": [
-        "오늘 결정하면 바로 시작할 수 있다고 말한다",
-        "선발 인원이 얼마 남지 않았다고 덧붙인다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 계속 응하거나 외부 확인을 시도함"
-      ]
-    },
-    {
-      "id": "risk_signal_exposure",
-      "objective": "민감 행동 요구가 나타나는 위험 지점을 대화 흐름 안에서 노출",
-      "tactics": [
-        "입금된 돈을 다른 계좌로 옮기는 업무라고 설명한다",
-        "본인 명의 계좌와 체크카드를 등록하라고 요구한다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 거부·의심·독립 확인 또는 수용 의사를 보임"
-      ]
-    },
-    {
-      "id": "termination",
-      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
-      "tactics": [
-        "실제 계좌정보 수집이나 실제 자금 이동 지시는 하지 않는다"
-      ],
-      "min_turns": 1,
-      "advance_when": [
-        "훈련 성공 또는 종료 조건 충족"
-      ]
-    }
-  ],
-  "tell_points": [
-    {
-      "id": "tp1",
-      "stage": "opening",
-      "signal_type": "risk",
-      "trigger": "업무 내용 없이 높은 보수를 먼저 제시함",
-      "why": "무슨 일인지 설명하지 않고 보수부터 말하는 채용은 정상이 아닙니다.",
-      "weight": 3,
-      "first_detectable_turn": 1
-    },
-    {
-      "id": "tp2",
-      "stage": "pressure_or_trust",
-      "signal_type": "risk",
-      "trigger": "입금된 돈을 다른 계좌로 옮기는 것이 업무라고 함",
-      "why": "이것은 자금세탁 운반책 업무입니다. 본인이 형사처벌 대상이 됩니다.",
-      "weight": 3,
-      "first_detectable_turn": 9
-    },
-    {
-      "id": "tp3",
-      "stage": "risk_signal_exposure",
-      "signal_type": "risk",
-      "trigger": "본인 계좌와 체크카드 등록을 요구함",
-      "why": "계좌나 카드를 넘기면 대포통장 명의자가 되어 금융거래가 제한됩니다.",
-      "weight": 3,
-      "first_detectable_turn": 13
-    }
-  ],
   "end_conditions": [
     {
-      "id": "ec1",
       "condition": "훈련생이 상대가 알려준 수단이 아닌 공식 앱·홈페이지·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "id": "ec1",
       "result": "training_success"
     },
     {
-      "id": "ec2",
       "condition": "훈련생이 개인정보·금융정보·인증정보 제공, 링크 클릭, 앱 설치 또는 송금 요구를 명확히 거부함",
+      "id": "ec2",
       "result": "training_success"
     },
     {
-      "id": "ec3",
       "condition": "훈련생이 보이스피싱·스미싱 가능성을 인지하고 대화를 종료하겠다고 명확히 밝힘",
+      "id": "ec3",
       "result": "training_success"
     },
     {
-      "id": "ec4",
       "condition": "훈련생이 더 이상 대화하지 않겠다는 의사를 반복적으로 표현함",
+      "id": "ec4",
       "result": "terminate"
     }
   ],
@@ -163,9 +38,134 @@
     "실제 원격제어 접속 정보",
     "실존 개인의 신원 정보"
   ],
-  "debrief_points": [
-    "돈을 옮겨주는 일은 아르바이트가 아니라 범죄입니다",
-    "계좌나 체크카드를 넘기면 본인이 처벌받고 금융거래가 막힙니다",
-    "업무 내용을 설명하지 않는 채용은 응하지 마세요"
-  ]
+  "goal": "훈련생이 쉬운 부업이라고 믿고 본인 계좌를 자금 이동에 내주도록 만든다",
+  "is_scam": true,
+  "learning_objectives": [
+    "훈련생이 '고수익 아르바이트 제안' 유형의 초기 미끼를 판별하는지 평가",
+    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
+    "훈련생이 개인정보·금융정보·앱 설치·송금 등 민감 행동 요구를 거부하는지 평가"
+  ],
+  "max_turns": 18,
+  "persona": {
+    "display_name": "채용 담당자",
+    "name": "살핌",
+    "org": "살핌",
+    "resistance_strategy": [
+      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
+      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
+    ],
+    "role": "상담 담당자",
+    "rules": [
+      "실제로 작동하는 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다. 필요하면 명백한 더미만 쓴다",
+      "한 번에 1~2문장으로 짧게 응답한다",
+      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
+    ],
+    "tone": "가볍고 친근한 말투. 부담 없다는 점을 반복한다.",
+    "voice_preset": "formal_neutral"
+  },
+  "scenario_id": "sc-37",
+  "schema_version": 1,
+  "source": "경찰청 전기통신금융사기 통합신고대응센터·금융감독원 공개 예방자료를 바탕으로 재구성한 훈련 시나리오",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/",
+    "https://www.fss.or.kr/fss/bbs/B0000203/list.do?menuNo=200686"
+  ],
+  "source_review_status": "auto_labeled",
+  "stages": [
+    {
+      "advance_when": [
+        "훈련생이 연락 목적을 이해하거나 대화에 응함"
+      ],
+      "id": "opening",
+      "min_turns": 2,
+      "objective": "사칭 신분·상황을 제시하고 대화를 시작",
+      "opening": "안녕하세요, 살핌 채용 담당 살핌입니다. 재택으로 하루 한두 시간이면 되는 업무가 있어서 연락드렸습니다. 지금 잠깐 말씀 나눌 수 있을까요?",
+      "tactics": [
+        "짧은 시간과 높은 보수로 관심을 끈다",
+        "업무 내용은 아직 구체적으로 말하지 않는다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 발신자의 설명을 받아들이거나 의심을 표현함"
+      ],
+      "id": "context_check",
+      "min_turns": 2,
+      "objective": "훈련생의 상황 인식과 신뢰 정도 확인",
+      "tactics": [
+        "현재 일을 하고 있는지, 시간이 되는지 확인한다",
+        "누구나 할 수 있는 단순 업무라고 안심시킨다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 계속 응하거나 외부 확인을 시도함"
+      ],
+      "id": "pressure_or_trust",
+      "min_turns": 2,
+      "objective": "권위·긴급성·관계 신뢰 중 해당 유형의 핵심 압박 신호 노출",
+      "tactics": [
+        "오늘 결정하면 바로 시작할 수 있다고 말한다",
+        "선발 인원이 얼마 남지 않았다고 덧붙인다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 거부·의심·독립 확인 또는 수용 의사를 보임"
+      ],
+      "id": "risk_signal_exposure",
+      "min_turns": 2,
+      "objective": "민감 행동 요구가 나타나는 위험 지점을 대화 흐름 안에서 노출",
+      "tactics": [
+        "입금된 돈을 다른 계좌로 옮기는 업무라고 설명한다",
+        "본인 명의 계좌와 체크카드를 등록하라고 요구한다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련 성공 또는 종료 조건 충족"
+      ],
+      "id": "termination",
+      "min_turns": 1,
+      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
+      "tactics": [
+        "실제 계좌정보 수집이나 실제 자금 이동 지시는 하지 않는다"
+      ]
+    }
+  ],
+  "target_tracks": [
+    "young",
+    "middle_age"
+  ],
+  "tell_points": [
+    {
+      "first_detectable_turn": 1,
+      "id": "tp1",
+      "signal_type": "risk",
+      "stage": "opening",
+      "trigger": "업무 내용 없이 높은 보수를 먼저 제시함",
+      "weight": 3,
+      "why": "무슨 일인지 설명하지 않고 보수부터 말하는 채용은 정상이 아닙니다."
+    },
+    {
+      "first_detectable_turn": 9,
+      "id": "tp2",
+      "signal_type": "risk",
+      "stage": "pressure_or_trust",
+      "trigger": "입금된 돈을 다른 계좌로 옮기는 것이 업무라고 함",
+      "weight": 3,
+      "why": "이것은 자금세탁 운반책 업무입니다. 본인이 형사처벌 대상이 됩니다."
+    },
+    {
+      "first_detectable_turn": 13,
+      "id": "tp3",
+      "signal_type": "risk",
+      "stage": "risk_signal_exposure",
+      "trigger": "본인 계좌와 체크카드 등록을 요구함",
+      "weight": 3,
+      "why": "계좌나 카드를 넘기면 대포통장 명의자가 되어 금융거래가 제한됩니다."
+    }
+  ],
+  "title": "고수익 아르바이트 제안 — 단순 업무를 빙자한 계좌 이용",
+  "track": "T05-3"
 }
