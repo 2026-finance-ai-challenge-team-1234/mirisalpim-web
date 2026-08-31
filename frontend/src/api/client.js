@@ -33,7 +33,9 @@ async function request(
   path,
   { method = "GET", body, rawBody, contentType = "application/json", idempotencyKey } = {},
 ) {
-  const headers = { "Content-Type": contentType };
+  // contentType이 null이면 Content-Type을 지정하지 않는다.
+  // FormData는 브라우저가 boundary까지 포함해 직접 헤더를 만들어야 해서, 여기서 덮으면 전송이 깨진다.
+  const headers = contentType ? { "Content-Type": contentType } : {};
 
   // GET 등 안전한 메서드가 아니면 CSRF 토큰 첨부
   if (method !== "GET") {
@@ -98,7 +100,10 @@ export async function apiPostRawSse(
   rawBody,
   { contentType = "application/octet-stream", idempotencyKey, signal, onEvent } = {},
 ) {
-  const headers = { "Content-Type": contentType, Accept: "text/event-stream" };
+  // contentType이 null이면 Content-Type을 생략한다 (FormData 대응, request()와 동일한 이유).
+  const headers = contentType
+    ? { "Content-Type": contentType, Accept: "text/event-stream" }
+    : { Accept: "text/event-stream" };
   const csrfToken = getCookie("csrftoken");
   if (csrfToken) headers["X-CSRFToken"] = csrfToken;
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import { useTrainee } from "../hooks/useTrainee";
 
 const CHANNEL_META = {
   voice: { label: "📞 음성 통화 (Voice)", isVoice: true },
@@ -10,6 +11,7 @@ const CHANNEL_META = {
 export default function Recommendation() {
   const navigate = useNavigate();
   const { state } = useLocation();
+  const { trainee } = useTrainee();
   const [showNoticeModal, setShowNoticeModal] = useState(false);
 
   const recommendation = state?.recommendation;
@@ -22,8 +24,7 @@ export default function Recommendation() {
 
   if (!recommendation) return null;
 
-  const savedUser = localStorage.getItem("userSurveyData");
-  const userName = savedUser ? JSON.parse(savedUser).userName || "고객" : "고객";
+  const userName = trainee.name || "고객";
 
   const channelMeta = CHANNEL_META[recommendation.category] || CHANNEL_META.voice;
 

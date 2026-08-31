@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { BootstrapProvider } from "./context/BootstrapContext";
+import { TraineeProvider } from "./context/TraineeContext";
 import Home from "./pages/Home";
 import TypeSelect from "./pages/TypeSelect";
 import ModeSelect from "./pages/ModeSelect";
@@ -52,9 +53,13 @@ function AnimatedRoutes() {
 export default function App() {
   return (
     <BootstrapProvider>
-      <BrowserRouter>
-        <AnimatedRoutes />
-      </BrowserRouter>
+      {/* 훈련생 정보(이름·나이·주소)는 localStorage 대신 이 Provider 안에서만 산다.
+          새로고침하면 사라지는 게 정상이다 (개인정보 미저장 원칙). */}
+      <TraineeProvider>
+        <BrowserRouter>
+          <AnimatedRoutes />
+        </BrowserRouter>
+      </TraineeProvider>
     </BootstrapProvider>
   );
 }

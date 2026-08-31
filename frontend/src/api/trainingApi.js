@@ -20,25 +20,54 @@ export function startTrainingSession() {
   return apiPost("/training-sessions", {});
 }
 
+// 훈련생 정보(이름·나이·주소)는 매 턴 함께 보낸다. 서버는 저장하지 않고
+// 사기꾼 프롬프트에만 쓴다 (backend/training/trainee.py).
+// 값이 없으면 아예 넣지 않는다.
+function withTrainee(body, trainee) {
+  return trainee ? { ...body, trainee } : body;
+}
+
+// 오디오 턴에 훈련생 정보를 함께 보내려면 multipart 여야 한다.
+// 쿼리 문자열로 보내면 이름이 웹서버·프록시 접근 로그에 남기 때문에 백엔드가 막아뒀다.
+function buildAudioBody(audioBlob, trainee) {
+  if (!trainee) {
+    // 정보가 없으면 기존처럼 원본 바이트를 그대로 보낸다.
+    return { body: audioBlob, contentType: audioBlob.type || "audio/webm" };
+  }
+
+  const form = new FormData();
+  form.append("audio", audioBlob, "turn.webm");
+  form.append("trainee", JSON.stringify(trainee));
+  // contentType: null → 브라우저가 multipart boundary까지 직접 붙이게 둔다.
+  return { body: form, contentType: null };
+}
+
 // 대화 한 턴 (동기 방식). 응답을 통째로 받은 뒤 한 번에 표시함.
 // idempotencyKey를 넘기면 네트워크 오류로 재시도해도 턴이 중복 진행되지 않음.
-export function sendTurn(sessionId, text, idempotencyKey) {
+export function sendTurn(sessionId, text, idempotencyKey, trainee) {
   return apiPost(
     `/training-sessions/${sessionId}/turns`,
-    { text },
+    withTrainee({ text }, trainee),
     { idempotencyKey: idempotencyKey || newIdempotencyKey() }
   );
 }
 
 // 브라우저 MediaRecorder가 만든 webm/opus 원본을 그대로 보냄.
 // 서버가 STT로 인식한 userText와 다음 상대방 발화/음성을 함께 반환함.
-export function sendAudioTurn(sessionId, audioBlob, sampleRate = 48000, idempotencyKey) {
+export function sendAudioTurn(
+  sessionId,
+  audioBlob,
+  sampleRate = 48000,
+  idempotencyKey,
+  trainee,
+) {
   const query = new URLSearchParams({ sampleRate: String(sampleRate) });
+  const { body, contentType } = buildAudioBody(audioBlob, trainee);
   return apiPostRaw(
     `/training-sessions/${sessionId}/turns/audio?${query}`,
-    audioBlob,
+    body,
     {
-      contentType: audioBlob.type || "audio/webm",
+      contentType,
       idempotencyKey: idempotencyKey || newIdempotencyKey(),
     },
   );
@@ -50,14 +79,15 @@ export function sendAudioTurnStream(
   sessionId,
   audioBlob,
   sampleRate = 48000,
-  { idempotencyKey, signal, onEvent } = {},
+  { idempotencyKey, signal, onEvent, trainee } = {},
 ) {
   const query = new URLSearchParams({ sampleRate: String(sampleRate) });
+  const { body, contentType } = buildAudioBody(audioBlob, trainee);
   return apiPostRawSse(
     `/training-sessions/${sessionId}/turns/audio/stream?${query}`,
-    audioBlob,
+    body,
     {
-      contentType: audioBlob.type || "audio/webm",
+      contentType,
       idempotencyKey: idempotencyKey || newIdempotencyKey(),
       signal,
       onEvent: async (event, data) => {

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import { useTrainee } from "../hooks/useTrainee";
 
 const q1Options = [
   { code: "AGE_10", label: "10대" },
@@ -57,6 +58,7 @@ const q4Options = [
 
 export default function Survey() {
   const navigate = useNavigate();
+  const { setTrainee } = useTrainee();
   const [step, setStep] = useState(1);
 
   const [answers, setAnswers] = useState({
@@ -84,7 +86,11 @@ export default function Survey() {
       return;
     }
 
-    localStorage.setItem("userSurveyData", JSON.stringify(answers));
+    // 개인정보는 localStorage 대신 메모리(Context)에만 둔다.
+    // 나이는 AGE_60 같은 코드라, 프롬프트에 쓸 사람이 읽는 문구로 바꿔서 넘긴다.
+    const ageLabel = q1Options.find((opt) => opt.code === answers.age)?.label || "";
+    setTrainee({ name: answers.userName, age: ageLabel, address: "" });
+
     navigate("/survey-loading", { state: { surveyAnswers: answers } });
   };
 

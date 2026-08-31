@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import { useTrainee } from "../hooks/useTrainee";
 import {
   startTrainingSession,
   sendAudioTurn,
@@ -115,13 +116,13 @@ function describeError(err) {
 
 export default function Simulation() {
   const navigate = useNavigate();
+  // 이름·나이·주소는 저장하지 않고 메모리에서 꺼내 매 턴 함께 보낸다.
+  const { traineePayload } = useTrainee();
 
   const [category] = useState(readInitialCategory);
 
   const [sessionId, setSessionId] = useState(null);
   const [chatHistory, setChatHistory] = useState([]);
-  const [turnNo, setTurnNo] = useState(0);
-  const [maxTurns, setMaxTurns] = useState(null);
   const [ended, setEnded] = useState(false);
 
   const [starting, setStarting] = useState(true);
@@ -140,6 +141,9 @@ export default function Simulation() {
   const [judging, setJudging] = useState(false);
 
   const chatEndRef = useRef(null);
+  // 리포트의 "대화 흐름 다시보기"에서 발화와 위험 지점을 맞추기 위해
+  // 각 발화에 턴 번호를 붙여 둔다. 첫 발화(opening)가 1턴이다.
+  const turnCounterRef = useRef(1);
   const categoryRef = useRef(category); // 최초 마운트 effect에서 category를 안전하게 참조
   const mountedRef = useRef(true);
   const speakerOnRef = useRef(true);
@@ -244,9 +248,12 @@ export default function Simulation() {
       .then((data) => {
         if (cancelled) return;
         setSessionId(data.sessionId);
-        setTurnNo(data.turnNo ?? 1);
-        setMaxTurns(data.maxTurns ?? null);
-        setChatHistory(data.opening ? [{ sender: "bot", text: data.opening }] : []);
+        turnCounterRef.current = data.turnNo ?? 1;
+        setChatHistory(
+          data.opening
+            ? [{ sender: "bot", text: data.opening, turn: turnCounterRef.current }]
+            : [],
+        );
         setStarting(false);
         if (categoryRef.current === "voice") playServerAudio(data.openingAudio);
       })
@@ -291,8 +298,20 @@ export default function Simulation() {
 
   // ───────── 대화 한 턴 ─────────
   const applyTurnResult = (data, userText = null) => {
+    const turn = data.turnNo ?? turnCounterRef.current + 1;
+    turnCounterRef.current = turn;
+
     if (userText) {
-      setChatHistory((prev) => [...prev, { sender: "user", text: userText }]);
+      setChatHistory((prev) => [...prev, { sender: "user", text: userText, turn }]);
+    } else {
+      // 텍스트 입력 경로는 사용자 발화를 먼저 넣어두므로, 마지막 항목에 턴만 채워 준다.
+      setChatHistory((prev) =>
+        prev.map((item, idx) =>
+          idx === prev.length - 1 && item.sender === "user" && item.turn == null
+            ? { ...item, turn }
+            : item,
+        ),
+      );
     }
 
     if (data.riskWarnings?.length) {
@@ -300,10 +319,9 @@ export default function Simulation() {
     }
 
     if (data.scammerText) {
-      setChatHistory((prev) => [...prev, { sender: "bot", text: data.scammerText }]);
+      setChatHistory((prev) => [...prev, { sender: "bot", text: data.scammerText, turn }]);
       if (category === "voice") playServerAudio(data.scammerAudio);
     }
-    setTurnNo((current) => data.turnNo ?? current + 1);
 
     if (data.ended) {
       setEnded(true);
@@ -321,7 +339,7 @@ export default function Simulation() {
     setError(null);
 
     try {
-      const data = await sendTurn(sessionId, text, newIdempotencyKey());
+      const data = await sendTurn(sessionId, text, newIdempotencyKey(), traineePayload);
       applyTurnResult(data);
     } catch (err) {
       console.error("[Simulation] 턴 처리 실패:", err);
@@ -357,6 +375,7 @@ export default function Simulation() {
         {
           idempotencyKey: requestId,
           signal: controller.signal,
+          trainee: traineePayload,
           onEvent: (event, data) => {
             if (!mountedRef.current) return;
 
@@ -404,12 +423,14 @@ export default function Simulation() {
 
             if (event === "done") {
               const finalText = data.text || streamedText;
+              const turn = data.turnNo ?? turnCounterRef.current + 1;
+              turnCounterRef.current = turn;
               setChatHistory((prev) => {
                 const hasBot = prev.some(
                   (item) => item.requestId === requestId && item.sender === "bot",
                 );
                 if (!hasBot && finalText) {
-                  return [...prev, { sender: "bot", text: finalText, requestId }];
+                  return [...prev, { sender: "bot", text: finalText, requestId, turn }];
                 }
                 return prev.map((item) =>
                   item.requestId === requestId && item.sender === "bot"
@@ -417,8 +438,15 @@ export default function Simulation() {
                     : item,
                 );
               });
-              setTurnNo((current) => data.turnNo ?? current + 1);
-              if (!receivedAudio) {
+
+              // 이 턴에 속한 발화(사용자·상대방)에 턴 번호를 채워 리포트에서 위험 지점과 맞춘다.
+              setChatHistory((prev) =>
+                prev.map((item) =>
+                  item.requestId === requestId ? { ...item, turn } : item,
+                ),
+              );
+
+                        if (!receivedAudio) {
                 setAudioNotice("음성을 재생할 수 없어 화면에 자막을 표시하고 있어요.");
               } else if (data.audioComplete === false) {
                 setAudioNotice("일부 음성을 재생하지 못해 자막으로 계속 진행하고 있어요.");
@@ -442,6 +470,7 @@ export default function Simulation() {
             audioBlob,
             sampleRate,
             requestId,
+            traineePayload,
           );
           applyTurnResult(data, data.userText);
           return;
@@ -576,7 +605,9 @@ export default function Simulation() {
 
     try {
       const report = await submitJudgment(sessionId, isScamGuess);
-      navigate("/report-loading", { state: { report } });
+      // 서버는 대화 원문을 저장하지 않으므로, 리포트에서 자막을 보여주려면
+      // 프론트가 들고 있던 기록을 그대로 넘겨야 한다.
+      navigate("/report-loading", { state: { report, transcript: chatHistory } });
     } catch (err) {
       console.error("[Simulation] 판단 제출 실패:", err);
       setJudging(false);
@@ -669,9 +700,6 @@ export default function Simulation() {
                   {waiting ? "응답 처리 중..." : isListening ? "듣는 중..." : "통화 중"}
                 </span>
               </div>
-              {maxTurns && (
-                <p className="text-[10px] text-gray-400 mt-3">대화 {turnNo} / {maxTurns}</p>
-              )}
               {chatHistory.length > 0 && (
                 <div className="w-full mt-4 bg-[#F8F9FA] border border-gray-100 rounded-xl px-4 py-3 text-left">
                   <p className="text-[9px] font-bold text-[#8B95A1] mb-1">통화 자막</p>
@@ -732,9 +760,6 @@ export default function Simulation() {
                 <div ref={chatEndRef} />
               </div>
 
-              {maxTurns && (
-                <p className="text-[10px] text-gray-400 text-center mt-2">대화 {turnNo} / {maxTurns}</p>
-              )}
             </div>
           )}
         </div>
