@@ -44,10 +44,13 @@ function buildAudioBody(audioBlob, trainee) {
 
 // 대화 한 턴 (동기 방식). 응답을 통째로 받은 뒤 한 번에 표시함.
 // idempotencyKey를 넘기면 네트워크 오류로 재시도해도 턴이 중복 진행되지 않음.
-export function sendTurn(sessionId, text, idempotencyKey, trainee) {
+// linkClicked: 화면에서 문자 속 링크를 눌러 보낸 턴이라는 표시.
+// 표시용 문장과 분리해 보낸다 - 서버가 문장을 문자열로 대조하면 문구를 다듬는
+// 순간 위험행동 기록이 조용히 끊긴다.
+export function sendTurn(sessionId, text, idempotencyKey, trainee, linkClicked = false) {
   return apiPost(
     `/training-sessions/${sessionId}/turns`,
-    withTrainee({ text }, trainee),
+    withTrainee({ text, linkClicked }, trainee),
     { idempotencyKey: idempotencyKey || newIdempotencyKey() }
   );
 }

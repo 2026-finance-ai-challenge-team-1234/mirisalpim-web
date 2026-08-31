@@ -329,7 +329,7 @@ export default function Simulation() {
     }
   };
 
-  const handleUserResponse = async (userMsg) => {
+  const handleUserResponse = async (userMsg, linkClicked = false) => {
     const text = userMsg.trim();
     if (!text || !sessionId || waiting || ended) return;
 
@@ -339,7 +339,13 @@ export default function Simulation() {
     setError(null);
 
     try {
-      const data = await sendTurn(sessionId, text, newIdempotencyKey(), traineePayload);
+      const data = await sendTurn(
+        sessionId,
+        text,
+        newIdempotencyKey(),
+        traineePayload,
+        linkClicked
+      );
       applyTurnResult(data);
     } catch (err) {
       console.error("[Simulation] 턴 처리 실패:", err);
@@ -350,9 +356,30 @@ export default function Simulation() {
   };
 
   const handleUrlClick = () => {
-    // 링크 클릭 자체도 하나의 '행동'이라 서버에 전달해 판정받음
-    handleUserResponse("(문자 속 링크를 클릭했습니다)");
+    // 링크 클릭 자체가 하나의 '행동'이다. 문장은 화면 표시용이고, 실제 기록은
+    // linkClicked 플래그로 남는다 - 서버가 확정 사실로 처리한다.
+    handleUserResponse("(문자 속 링크를 클릭했습니다)", true);
   };
+
+  // 문자 안의 URL 자체를 누르는 대상으로 그린다. 실제 사기 문자와 같은 모습이어야
+  // 도메인을 보고 판단하는 훈련이 된다.
+  // <a href> 가 아니라 button 인 이유: 실제로 이동시키지 않는다. .example 은 접속되지
+  // 않는 예약 도메인이고, 여는 행동을 위험행동으로 기록하는 것이 목적이다.
+  const renderWithLinks = (text) =>
+    text.split(/(https?:\/\/\S+)/g).map((part, i) =>
+      /^https?:\/\//.test(part) ? (
+        <button
+          key={i}
+          onClick={handleUrlClick}
+          disabled={waiting || ended}
+          className="text-[#0052CC] font-bold underline break-all hover:opacity-80 transition disabled:opacity-40"
+        >
+          {part}
+        </button>
+      ) : (
+        part
+      )
+    );
 
   const submitRecordedAudio = async (audioBlob, sampleRate) => {
     if (!sessionId || !audioBlob.size || waiting || ended) return;
@@ -736,16 +763,9 @@ export default function Simulation() {
                         ? "bg-[#0052CC] text-white rounded-br-none"
                         : "bg-gray-100 text-[#191F28] border border-gray-200 rounded-bl-none"
                     }`}>
-                      <p className="whitespace-pre-wrap">{item.text}</p>
-                      {item.sender === "bot" && /https?:\/\/\S+/.test(item.text) && (
-                        <button
-                          onClick={handleUrlClick}
-                          disabled={waiting || ended}
-                          className="text-[#0052CC] font-bold underline block mt-2 hover:opacity-80 transition disabled:opacity-40"
-                        >
-                          링크 열기
-                        </button>
-                      )}
+                      <p className="whitespace-pre-wrap">
+                        {item.sender === "bot" ? renderWithLinks(item.text) : item.text}
+                      </p>
                     </div>
                   </div>
                 ))}

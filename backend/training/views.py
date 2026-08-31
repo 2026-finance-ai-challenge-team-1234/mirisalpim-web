@@ -9,6 +9,7 @@ import uuid
 from ai_core.engine import Engine, load_scenario, start_session, step
 from ai_core.llm import ConfigError
 from asgiref.sync import sync_to_async
+from ai_core.types import RiskyAction as EngineRiskyAction
 from ai_core.types import UserJudgment as EngineJudgment
 from django.db import IntegrityError, connections, transaction
 from django.http import StreamingHttpResponse
@@ -430,7 +431,33 @@ def _check_turn_request(request, session_id):
     return text, anon_client_id, body, None
 
 
-def _run_step(scenario, state, masked_text):
+def _link_clicked(body):
+    """화면에서 문자 속 링크를 눌러 보낸 턴인지.
+
+    표시용 문장(text)과 분리해서 받는다 - 서버가 "(문자 속 링크를 클릭했습니다)"
+    같은 문장을 문자열로 대조하면, 프론트가 문구를 다듬는 순간 위험행동 기록이
+    조용히 끊긴다.
+    """
+    return body.get("linkClicked") is True
+
+
+def _record_link_click(state, outcome, user_turn):
+    """링크 클릭을 확정 사실로 기록한다.
+
+    화면에서 링크를 누른 것은 이미 관찰된 행동이지 추론할 대상이 아니다.
+    판정기가 "(문자 속 링크를 클릭했습니다)" 라는 문장을 읽고 link_click 으로
+    분류해 주기를 기다리면, 모델이 놓치는 턴마다 F-14 즉시 개입이 사라지고
+    최종 리포트의 riskyActions 에서도 빠진다.
+
+    판정기가 이미 잡았으면 중복으로 넣지 않는다 - 위험행동 수가 두 배가 된다.
+    """
+    if "link_click" in outcome.risky_actions:
+        return
+    outcome.risky_actions.append("link_click")
+    state.risky_actions.append(EngineRiskyAction(turn=user_turn, type="link_click"))
+
+
+def _run_step(scenario, state, masked_text, link_clicked=False):
     """step() 을 시간 제한과 함께 돌린다.
 
     step() 은 LLM 을 세 번 부르고 취소할 방법이 없다. 제한 시간이 지나면 스레드는
@@ -442,6 +469,8 @@ def _run_step(scenario, state, masked_text):
     설정이 잘못된 것이라 운영자가 고쳐야 하고, 500 으로 드러나야 눈에 띈다.
     """
     box = {}
+    # step() 안에서 state.turn 이 두 번 오르므로(훈련생·사기범) 지금 값을 잡아둔다.
+    user_turn = state.turn + 1
 
     def run():
         try:
@@ -461,7 +490,11 @@ def _run_step(scenario, state, masked_text):
         if isinstance(box["error"], ConfigError):
             raise box["error"]
         return None, "AI_ERROR"
-    return box["outcome"], None
+
+    outcome = box["outcome"]
+    if link_clicked:
+        _record_link_click(state, outcome, user_turn)
+    return outcome, None
 
 
 def _open_turn(session_id, anon_client_id):
@@ -516,6 +549,7 @@ def submit_turn(request, session_id):
     text, anon_client_id, body, failure = _check_turn_request(request, session_id)
     if failure is not None:
         return failure
+    link_clicked = _link_clicked(body)
 
     # 같은 Idempotency-Key 로 다시 왔다면 턴을 또 진행하지 않고 첫 응답을 돌려준다.
     idem_key = idempotency_cache_key(request, session_id)
@@ -533,7 +567,7 @@ def submit_turn(request, session_id):
     masked_text, detected_pii = mask_pii(text)
 
     # 트랜잭션 밖 - 여기가 4~20초 걸린다.
-    outcome, error_code = _run_step(scenario, state, masked_text)
+    outcome, error_code = _run_step(scenario, state, masked_text, link_clicked)
     if error_code == "AI_TIMEOUT":
         return error_response(
             "AI_TIMEOUT", "응답이 지연되고 있습니다. 다시 시도해 주세요.", 504
@@ -903,6 +937,7 @@ def turn_stream(request, session_id):
     text, anon_client_id, body, failure = _check_turn_request(request, session_id)
     if failure is not None:
         return failure
+    link_clicked = _link_clicked(body)
 
     context, failure = _open_turn(session_id, anon_client_id)
     if failure is not None:
@@ -921,6 +956,7 @@ def turn_stream(request, session_id):
             loaded_turn,
             masked_text,
             detected_pii,
+            link_clicked=link_clicked,
         )
     )
     return response
@@ -983,6 +1019,7 @@ async def _turn_events(
     *,
     include_audio=False,
     user_text=None,
+    link_clicked=False,
 ):
     accepted = {"turnNo": loaded_turn + 1}
     if user_text is not None:
@@ -1082,6 +1119,8 @@ async def _turn_events(
         return
 
     outcome = box["outcome"]
+    if link_clicked:
+        _record_link_click(state, outcome, loaded_turn + 1)
 
     # 판정기 결과는 step() 이 끝나야 알 수 있어서 여기서 내보낸다. 동기 경로
     # (submit_turn)와 같은 결과가 되도록 두 신호를 합쳐서 계산한 뒤, 앞에서 이미

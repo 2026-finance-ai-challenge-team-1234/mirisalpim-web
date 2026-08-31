@@ -667,14 +667,14 @@ class SubmitTurnTests(TestCase):
         )
         return self.client.post("/api/v1/training-sessions").json()["sessionId"]
 
-    def turn(self, session_id, text, risky_actions=()):
+    def turn(self, session_id, text, risky_actions=(), link_clicked=False):
         with patch(
             "training.views.step",
             side_effect=lambda e, t, **kw: fake_step(e, t, risky_actions=risky_actions),
         ):
             return self.client.post(
                 f"/api/v1/training-sessions/{session_id}/turns",
-                data={"text": text},
+                data={"text": text, "linkClicked": link_clicked},
                 content_type="application/json",
             )
 
@@ -753,6 +753,52 @@ class SubmitTurnTests(TestCase):
         self.assertEqual(payload["riskWarnings"][0]["type"], "appInstall")
         self.assertEqual(
             Session.objects.get(pk=session_id).risky_actions.count(), 1
+        )
+
+    def test_link_click_is_recorded_even_when_the_judge_misses_it(self):
+        """링크 클릭은 관찰된 사실이라 판정기 결과와 무관하게 남아야 한다.
+
+        판정기가 "(문자 속 링크를 클릭했습니다)" 를 link_click 으로 분류해 주기를
+        기다리면, 모델이 놓치는 턴마다 F-14 즉시 개입과 리포트의 riskyActions 가
+        통째로 사라진다.
+        """
+        session_id = self.start_training()
+
+        payload = self.turn(
+            session_id,
+            "(문자 속 링크를 클릭했습니다)",
+            risky_actions=(),
+            link_clicked=True,
+        ).json()
+
+        self.assertEqual(payload["riskWarnings"][0]["type"], "linkClick")
+        actions = Session.objects.get(pk=session_id).risky_actions
+        self.assertEqual(actions.count(), 1)
+        self.assertEqual(actions.get().action_type, "link_click")
+
+    def test_link_click_is_not_double_counted_when_the_judge_also_catches_it(self):
+        session_id = self.start_training()
+
+        payload = self.turn(
+            session_id,
+            "(문자 속 링크를 클릭했습니다)",
+            risky_actions=["link_click"],
+            link_clicked=True,
+        ).json()
+
+        self.assertEqual(len(payload["riskWarnings"]), 1)
+        self.assertEqual(
+            Session.objects.get(pk=session_id).risky_actions.count(), 1
+        )
+
+    def test_a_plain_turn_records_no_link_click(self):
+        session_id = self.start_training()
+
+        payload = self.turn(session_id, "링크 안 눌렀어요").json()
+
+        self.assertEqual(payload["riskWarnings"], [])
+        self.assertEqual(
+            Session.objects.get(pk=session_id).risky_actions.count(), 0
         )
 
     def test_warns_about_each_kind_of_personal_info(self):
