@@ -1,156 +1,30 @@
 {
-  "schema_version": 1,
-  "scenario_id": "sc-18",
   "category": "voice",
-  "track": "T01-9",
-  "target_tracks": [
-    "young",
-    "middle_age",
-    "senior"
+  "debrief_points": [
+    "명의도용 확인은 끊고 통신사 대표번호나 대리점에서 하세요",
+    "전화 안내로 앱을 설치하는 절차는 존재하지 않습니다",
+    "M-Safer 에서 본인 명의 가입 현황을 직접 조회할 수 있습니다"
   ],
-  "title": "통신사 사칭 — 명의도용 개통 확인을 빙자한 접근",
-  "source": "경찰청 전기통신금융사기 통합신고대응센터·금융감독원 공개 예방자료를 바탕으로 재구성한 훈련 시나리오",
-  "source_refs": [
-    "https://www.counterscam112.go.kr/",
-    "https://www.fss.or.kr/fss/bbs/B0000203/list.do?menuNo=200686"
-  ],
-  "source_review_status": "auto_labeled",
-  "is_scam": true,
   "difficulty": 2,
-  "goal": "훈련생이 명의도용을 막으려는 마음에 신원 정보를 말하고 앱 설치에 동의하도록 만든다",
-  "learning_objectives": [
-    "훈련생이 '통신사 사칭' 유형의 초기 미끼를 판별하는지 평가",
-    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
-    "훈련생이 개인정보·금융정보·앱 설치·송금 등 민감 행동 요구를 거부하는지 평가"
-  ],
-  "max_turns": 18,
-  "persona": {
-    "display_name": "명의보호센터 담당자",
-    "name": "박준영",
-    "org": "세움통신",
-    "role": "안내 담당자",
-    "tone": "다급하지만 절제된 안내 투. 도와주려는 태도를 유지한다.",
-    "rules": [
-      "실제로 작동하는 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다. 필요하면 명백한 더미만 쓴다",
-      "한 번에 1~2문장으로 짧게 응답한다",
-      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
-    ],
-    "resistance_strategy": [
-      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
-      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
-    ],
-    "voice_preset": "formal_neutral"
-  },
-  "stages": [
-    {
-      "id": "opening",
-      "objective": "사칭 신분·상황을 제시하고 대화를 시작",
-      "tactics": [
-        "명의도용이라는 피해 상황을 제시한다",
-        "본인 확인만 하면 막을 수 있다고 안심시킨다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 연락 목적을 이해하거나 대화에 응함"
-      ],
-      "opening": "세움통신 명의보호센터 박준영입니다. 고객님 명의로 타 지역에서 휴대폰 개통 신청이 접수돼서 본인 신청이 맞는지 확인차 연락드렸습니다."
-    },
-    {
-      "id": "context_check",
-      "objective": "훈련생의 상황 인식과 신뢰 정도 확인",
-      "tactics": [
-        "최근 개통이나 기기 변경 이력이 있는지 확인한다",
-        "본인이 아니면 즉시 차단하겠다고 말한다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 발신자의 설명을 받아들이거나 의심을 표현함"
-      ]
-    },
-    {
-      "id": "pressure_or_trust",
-      "objective": "권위·긴급성·관계 신뢰 중 해당 유형의 핵심 압박 신호 노출",
-      "tactics": [
-        "개통이 완료되면 요금과 소액결제가 발생한다고 압박한다",
-        "이미 몇 시간 지났다고 덧붙인다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 계속 응하거나 외부 확인을 시도함"
-      ]
-    },
-    {
-      "id": "risk_signal_exposure",
-      "objective": "민감 행동 요구가 나타나는 위험 지점을 대화 흐름 안에서 노출",
-      "tactics": [
-        "차단 접수를 위해 주민등록번호를 말하게 한다",
-        "명의보호 앱을 설치하라고 안내한다"
-      ],
-      "min_turns": 2,
-      "advance_when": [
-        "훈련생이 거부·의심·독립 확인 또는 수용 의사를 보임"
-      ]
-    },
-    {
-      "id": "termination",
-      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
-      "tactics": [
-        "실제 주민등록번호는 수집하지 않으며 실제 앱 설치 경로도 제시하지 않는다"
-      ],
-      "min_turns": 1,
-      "advance_when": [
-        "훈련 성공 또는 종료 조건 충족"
-      ]
-    }
-  ],
-  "tell_points": [
-    {
-      "id": "tp1",
-      "stage": "opening",
-      "signal_type": "risk",
-      "trigger": "통신사가 먼저 전화해 명의도용 차단을 접수하겠다고 함",
-      "why": "명의도용 차단은 본인이 명의도용방지서비스나 통신사 공식 앱에서 직접 신청합니다.",
-      "weight": 3,
-      "first_detectable_turn": 1
-    },
-    {
-      "id": "tp2",
-      "stage": "pressure_or_trust",
-      "signal_type": "risk",
-      "trigger": "소액결제 피해를 내세워 즉시 처리하라고 압박함",
-      "why": "불안을 키워 확인 없이 따르게 만드는 구조입니다. 실제라면 대리점에서 확인됩니다.",
-      "weight": 2,
-      "first_detectable_turn": 9
-    },
-    {
-      "id": "tp3",
-      "stage": "risk_signal_exposure",
-      "signal_type": "risk",
-      "trigger": "차단 절차라며 앱 설치를 요구함",
-      "why": "전화로 안내받아 설치하는 앱은 통화와 문자를 가로채는 악성앱일 수 있습니다.",
-      "weight": 3,
-      "first_detectable_turn": 13
-    }
-  ],
   "end_conditions": [
     {
-      "id": "ec1",
       "condition": "훈련생이 상대가 알려준 수단이 아닌 공식 앱·홈페이지·대표번호 등 공식 채널에서 직접 확인하겠다고 말함",
+      "id": "ec1",
       "result": "training_success"
     },
     {
-      "id": "ec2",
       "condition": "훈련생이 개인정보·금융정보·인증정보 제공, 링크 클릭, 앱 설치 또는 송금 요구를 명확히 거부함",
+      "id": "ec2",
       "result": "training_success"
     },
     {
-      "id": "ec3",
       "condition": "훈련생이 보이스피싱·스미싱 가능성을 인지하고 대화를 종료하겠다고 명확히 밝힘",
+      "id": "ec3",
       "result": "training_success"
     },
     {
-      "id": "ec4",
       "condition": "훈련생이 더 이상 대화하지 않겠다는 의사를 반복적으로 표현함",
+      "id": "ec4",
       "result": "terminate"
     }
   ],
@@ -164,9 +38,135 @@
     "실제 원격제어 접속 정보",
     "실존 개인의 신원 정보"
   ],
-  "debrief_points": [
-    "명의도용 확인은 끊고 통신사 대표번호나 대리점에서 하세요",
-    "전화 안내로 앱을 설치하는 절차는 존재하지 않습니다",
-    "M-Safer 에서 본인 명의 가입 현황을 직접 조회할 수 있습니다"
-  ]
+  "goal": "훈련생이 명의도용을 막으려는 마음에 신원 정보를 말하고 앱 설치에 동의하도록 만든다",
+  "is_scam": true,
+  "learning_objectives": [
+    "훈련생이 '통신사 사칭' 유형의 초기 미끼를 판별하는지 평가",
+    "훈련생이 상대가 제시한 연락처가 아니라 공식 채널에서 독립적으로 재확인하는지 평가",
+    "훈련생이 개인정보·금융정보·앱 설치·송금 등 민감 행동 요구를 거부하는지 평가"
+  ],
+  "max_turns": 18,
+  "persona": {
+    "display_name": "명의보호센터 담당자",
+    "name": "살핌",
+    "org": "살핌",
+    "resistance_strategy": [
+      "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
+      "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
+    ],
+    "role": "안내 담당자",
+    "rules": [
+      "실제로 작동하는 계좌번호·URL·앱 설치 경로·인증정보는 제시하지 않는다. 필요하면 명백한 더미만 쓴다",
+      "한 번에 1~2문장으로 짧게 응답한다",
+      "훈련생이 공식 채널로 독립 확인하겠다고 명확히 말하면 안전 행동으로 인정하고 종료 단계로 이동한다"
+    ],
+    "tone": "다급하지만 절제된 안내 투. 도와주려는 태도를 유지한다.",
+    "voice_preset": "formal_neutral"
+  },
+  "scenario_id": "sc-18",
+  "schema_version": 1,
+  "source": "경찰청 전기통신금융사기 통합신고대응센터·금융감독원 공개 예방자료를 바탕으로 재구성한 훈련 시나리오",
+  "source_refs": [
+    "https://www.counterscam112.go.kr/",
+    "https://www.fss.or.kr/fss/bbs/B0000203/list.do?menuNo=200686"
+  ],
+  "source_review_status": "auto_labeled",
+  "stages": [
+    {
+      "advance_when": [
+        "훈련생이 연락 목적을 이해하거나 대화에 응함"
+      ],
+      "id": "opening",
+      "min_turns": 2,
+      "objective": "사칭 신분·상황을 제시하고 대화를 시작",
+      "opening": "살핌 명의보호센터 살핌입니다. 고객님 명의로 타 지역에서 휴대폰 개통 신청이 접수돼서 본인 신청이 맞는지 확인차 연락드렸습니다.",
+      "tactics": [
+        "명의도용이라는 피해 상황을 제시한다",
+        "본인 확인만 하면 막을 수 있다고 안심시킨다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 발신자의 설명을 받아들이거나 의심을 표현함"
+      ],
+      "id": "context_check",
+      "min_turns": 2,
+      "objective": "훈련생의 상황 인식과 신뢰 정도 확인",
+      "tactics": [
+        "최근 개통이나 기기 변경 이력이 있는지 확인한다",
+        "본인이 아니면 즉시 차단하겠다고 말한다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 계속 응하거나 외부 확인을 시도함"
+      ],
+      "id": "pressure_or_trust",
+      "min_turns": 2,
+      "objective": "권위·긴급성·관계 신뢰 중 해당 유형의 핵심 압박 신호 노출",
+      "tactics": [
+        "개통이 완료되면 요금과 소액결제가 발생한다고 압박한다",
+        "이미 몇 시간 지났다고 덧붙인다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련생이 거부·의심·독립 확인 또는 수용 의사를 보임"
+      ],
+      "id": "risk_signal_exposure",
+      "min_turns": 2,
+      "objective": "민감 행동 요구가 나타나는 위험 지점을 대화 흐름 안에서 노출",
+      "tactics": [
+        "차단 접수를 위해 주민등록번호를 말하게 한다",
+        "명의보호 앱을 설치하라고 안내한다"
+      ]
+    },
+    {
+      "advance_when": [
+        "훈련 성공 또는 종료 조건 충족"
+      ],
+      "id": "termination",
+      "min_turns": 1,
+      "objective": "안전 행동 확인 또는 안전 한계에서 종료",
+      "tactics": [
+        "실제 주민등록번호는 수집하지 않으며 실제 앱 설치 경로도 제시하지 않는다"
+      ]
+    }
+  ],
+  "target_tracks": [
+    "young",
+    "middle_age",
+    "senior"
+  ],
+  "tell_points": [
+    {
+      "first_detectable_turn": 1,
+      "id": "tp1",
+      "signal_type": "risk",
+      "stage": "opening",
+      "trigger": "통신사가 먼저 전화해 명의도용 차단을 접수하겠다고 함",
+      "weight": 3,
+      "why": "명의도용 차단은 본인이 명의도용방지서비스나 통신사 공식 앱에서 직접 신청합니다."
+    },
+    {
+      "first_detectable_turn": 9,
+      "id": "tp2",
+      "signal_type": "risk",
+      "stage": "pressure_or_trust",
+      "trigger": "소액결제 피해를 내세워 즉시 처리하라고 압박함",
+      "weight": 2,
+      "why": "불안을 키워 확인 없이 따르게 만드는 구조입니다. 실제라면 대리점에서 확인됩니다."
+    },
+    {
+      "first_detectable_turn": 13,
+      "id": "tp3",
+      "signal_type": "risk",
+      "stage": "risk_signal_exposure",
+      "trigger": "차단 절차라며 앱 설치를 요구함",
+      "weight": 3,
+      "why": "전화로 안내받아 설치하는 앱은 통화와 문자를 가로채는 악성앱일 수 있습니다."
+    }
+  ],
+  "title": "통신사 사칭 — 명의도용 개통 확인을 빙자한 접근",
+  "track": "T01-9"
 }
