@@ -108,7 +108,7 @@
       "trigger": "카드번호·비밀번호·인증번호·앱 설치를 요구하지 않음",
       "why": "정상 알림은 결제 확인을 위해 민감한 금융정보나 인증정보를 요구하지 않습니다.",
       "weight": 1,
-      "first_detectable_turn": 3
+      "first_detectable_turn": 5
     }
   ],
   "end_conditions": [
