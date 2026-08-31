@@ -12,10 +12,11 @@ export default function ReportLoading() {
 
   useEffect(() => {
     const report = state?.report;
+    const transcript = state?.transcript;
 
     const timer = setTimeout(() => {
       if (report) {
-        navigate("/report", { state: { report }, replace: true });
+        navigate("/report", { state: { report, transcript }, replace: true });
       } else {
         // 판단을 거치지 않고 직접 들어온 경우 (새로고침 등) → 훈련 선택으로 되돌림
         navigate("/type-select", { replace: true });

@@ -1,17 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { toPng } from "html-to-image";
 import PageHeader from "../components/PageHeader";
-
-function readStoredUserName() {
-  try {
-    const savedUser = localStorage.getItem("userSurveyData");
-    if (!savedUser) return "고객";
-    const parsed = JSON.parse(savedUser);
-    return parsed?.userName || "고객";
-  } catch {
-    return "고객";
-  }
-}
+import { useTrainee } from "../hooks/useTrainee";
 
 // 등급별 표시 스타일. 점수는 쓰지 않고 등급만 노출한다(설계 확정 사항).
 const GRADE_META = {
@@ -43,13 +34,24 @@ const RISKY_ACTION_LABEL = {
 export default function Report() {
   const navigate = useNavigate();
   const { state } = useLocation();
+  const { trainee } = useTrainee();
 
-  const [userName] = useState(readStoredUserName);
-  const [shareToast, setShareToast] = useState(false);
-  const [downloadToast, setDownloadToast] = useState(false);
+  const userName = trainee.name || "고객";
+  const [toast, setToast] = useState(null); // { type: "success" | "error", text }
+  const [saving, setSaving] = useState(false);
   const [showTimeline, setShowTimeline] = useState(true);
 
+  // 이미지로 저장할 영역 (헤더~본문까지, 하단 버튼은 제외)
+  const captureRef = useRef(null);
+
+  const showToast = (type, text, ms = 2400) => {
+    setToast({ type, text });
+    setTimeout(() => setToast(null), ms);
+  };
+
   const report = state?.report;
+  // 훈련 중 주고받은 대화. 서버가 원문을 저장하지 않으므로 Simulation 이 메모리로 넘겨준다.
+  const transcript = state?.transcript || [];
 
   // 판단을 거치지 않고 직접 들어온 경우(새로고침/URL 직접 입력) → 훈련 선택으로
   useEffect(() => {
@@ -58,41 +60,130 @@ export default function Report() {
 
   if (!report) return null;
 
+  // 턴 번호 → 그 턴에 붙은 마커 목록. 자막 옆에 위험 표시를 달기 위해 미리 만들어 둔다.
+  const markersByTurn = new Map(
+    (report.timeline || []).map((item) => [item.turn, item.markers || []]),
+  );
+
   const isFalseAlarm = report.grade === "오탐";
   const gradeMeta = GRADE_META[report.grade] || GRADE_META.B;
 
-  const handleShare = async () => {
-    const shareData = {
-      title: "미리살핌 - 금융사기 대응 진단 리포트",
-      text: `[미리살핌] ${userName}님의 금융사기 대응 훈련 결과입니다. 지금 바로 체험해 보세요!`,
-      url: window.location.origin,
-    };
+  // ───────── 결과 이미지로 저장 ─────────
+  // 모바일은 다운로드 대신 공유 시트(파일 공유)를 띄우는 편이 훨씬 자연스러워서
+  // navigator.share(files)를 먼저 시도하고, 안 되면 다운로드로 떨어뜨린다.
+  const handleSaveImage = async () => {
+    if (!captureRef.current || saving) return;
+    setSaving(true);
 
-    if (navigator.share) {
+    try {
+      // html2canvas는 Tailwind v4가 쓰는 oklch() 색상을 파싱하지 못해 실패함 → html-to-image 사용.
+      //
+      // 폰트는 그대로 살리는 게 기본이다. index.html 의 구글 폰트 <link> 에
+      // crossorigin 을 붙여두면 폰트 CSS 를 읽어 이미지에 심을 수 있다.
+      // 그래도 브라우저가 막는 경우가 있어(확장 프로그램, 사설 프록시 등),
+      // 실패하면 폰트만 빼고 한 번 더 시도해 저장 자체는 반드시 되게 한다.
+      const baseOptions = {
+        backgroundColor: "#ffffff",
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 2), // 너무 큰 이미지 방지
+        cacheBust: true,
+      };
+
+      let dataUrl;
       try {
-        await navigator.share(shareData);
-      } catch (err) {
-        console.log("공유 에러:", err);
+        dataUrl = await toPng(captureRef.current, baseOptions);
+      } catch (fontError) {
+        console.warn("[Report] 폰트 포함 캡처 실패, 폰트 없이 다시 시도합니다:", fontError);
+        dataUrl = await toPng(captureRef.current, { ...baseOptions, skipFonts: true });
       }
-    } else {
-      navigator.clipboard.writeText(window.location.origin);
-      setShareToast(true);
-      setTimeout(() => setShareToast(false), 2000);
+
+      const blob = await (await fetch(dataUrl)).blob();
+      if (!blob) throw new Error("이미지 생성에 실패했습니다.");
+
+      const fileName = `미리살핌_진단리포트_${userName}.png`;
+      const file = new File([blob], fileName, { type: "image/png" });
+
+      // 1순위: 파일 공유 (모바일에서 "이미지 저장" 옵션이 함께 뜸)
+      if (navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: "미리살핌 진단 리포트" });
+          return;
+        } catch (err) {
+          if (err?.name === "AbortError") return; // 사용자가 취소한 것은 오류가 아님
+          // 공유가 막힌 환경이면 아래 다운로드로 계속 진행
+        }
+      }
+
+      // 2순위: 파일 다운로드
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      showToast("success", "리포트 이미지를 저장했어요!");
+    } catch (err) {
+      console.error("[Report] 이미지 저장 실패:", err);
+      showToast("error", "이미지 저장에 실패했어요. 화면을 캡처해 저장해주세요.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleExportPrintable = () => {
-    setDownloadToast(true);
-    setTimeout(() => {
-      setDownloadToast(false);
-      window.print();
-    }, 1200);
+  // ───────── 가족에게 체험 공유 ─────────
+  // 리포트 내용이 아니라 "체험 자체"를 권하는 링크(서비스 홈)를 공유한다.
+  const handleShareService = async () => {
+    const shareUrl = window.location.origin;
+    const shareData = {
+      title: "미리살핌 - 금융사기 예방 모의 훈련",
+      text: "보이스피싱, 말로만 조심하지 말고 미리 한번 겪어봐요. 5분이면 충분해요!",
+      url: shareUrl,
+    };
+
+    // 1순위: 공유 시트 (모바일)
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch (err) {
+        if (err?.name === "AbortError") return; // 사용자가 취소
+        // 그 외에는 아래 복사로 계속 진행
+      }
+    }
+
+    // 2순위: 클립보드 복사 (https 또는 localhost에서만 동작)
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast("success", "링크를 복사했어요! 가족에게 붙여넣어 보내주세요.");
+      return;
+    } catch {
+      // 3순위: 구형/비보안 환경 폴백 — 임시 input을 만들어 선택 후 복사
+      try {
+        const input = document.createElement("input");
+        input.value = shareUrl;
+        input.setAttribute("readonly", "");
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        input.select();
+        input.setSelectionRange(0, 99999); // iOS 대응
+        document.execCommand("copy");
+        document.body.removeChild(input);
+        showToast("success", "링크를 복사했어요! 가족에게 붙여넣어 보내주세요.");
+      } catch {
+        showToast("error", `링크 복사에 실패했어요. 주소창의 주소를 직접 공유해주세요.`, 3200);
+      }
+    }
   };
 
   return (
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">
       <div className="w-full max-w-[393px] min-h-[100dvh] sm:h-auto sm:min-h-[780px] bg-white shadow-xl sm:rounded-3xl border-0 sm:border border-gray-100 flex flex-col relative">
 
+        {/* 이미지로 저장되는 영역 (하단 버튼은 제외) */}
+        <div ref={captureRef} className="bg-white">
         <PageHeader padding="pt-4 pb-3" bordered className="px-6 bg-white z-20" />
 
         <div className="px-6 py-4 space-y-4">
@@ -175,8 +266,8 @@ export default function Report() {
             </div>
           )}
 
-          {/* ───────── ③ 대화 리플레이 타임라인 ───────── */}
-          {report.timeline?.length > 0 && (
+          {/* ───────── ③ 대화 리플레이 (자막 + 위험 지점 강조) ───────── */}
+          {(transcript.length > 0 || report.timeline?.length > 0) && (
             <div>
               <button
                 onClick={() => setShowTimeline((v) => !v)}
@@ -187,36 +278,74 @@ export default function Report() {
               </button>
 
               {showTimeline && (
-                <div className="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 space-y-2 animate-fade-in">
-                  {report.timeline.map((item, idx) => {
-                    const markers = item.markers || [];
-                    return (
-                      <div key={idx} className="flex items-start space-x-2.5">
-                        <span className="text-[10px] font-mono font-bold text-gray-400 w-4 shrink-0 mt-0.5">
-                          {item.turn}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          {markers.length === 0 ? (
-                            <span className="text-[11px] text-gray-300">●</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-x-2 gap-y-1">
-                              {markers.map((m, i) => {
-                                const meta = MARKER_META[m];
-                                if (!meta) return null;
-                                return (
-                                  <span key={i} className={`text-[10px] font-bold ${meta.color}`}>
-                                    {meta.icon} {meta.label}
-                                  </span>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="bg-[#F8F9FA] border border-gray-100 rounded-2xl p-4 animate-fade-in">
+                  {transcript.length > 0 ? (
+                    <div className="space-y-3">
+                      {transcript.map((line, idx) => {
+                        // 이 발화가 속한 턴에 표시할 마커가 있으면 함께 보여준다.
+                        const markers = line.turn != null ? markersByTurn.get(line.turn) : undefined;
+                        const isUser = line.sender === "user";
+                        const highlighted = Boolean(markers?.length);
 
-                  <div className="pt-2 mt-1 border-t border-gray-200 flex flex-wrap gap-x-3 gap-y-1">
+                        return (
+                          <div key={idx}>
+                            <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                              <div
+                                className={`px-3 py-2 rounded-xl text-[11px] leading-relaxed max-w-[85%] break-keep ${
+                                  isUser
+                                    ? "bg-[#0052CC] text-white rounded-br-none"
+                                    : "bg-white text-[#191F28] border border-gray-200 rounded-bl-none"
+                                } ${highlighted ? "ring-2 ring-red-300" : ""}`}
+                              >
+                                <span className={`text-[9px] font-bold block mb-0.5 ${isUser ? "text-blue-100" : "text-gray-400"}`}>
+                                  {isUser ? "나" : "상대방"}
+                                </span>
+                                <span className="whitespace-pre-wrap">{line.text}</span>
+                              </div>
+                            </div>
+
+                            {highlighted && (
+                              <div className={`flex flex-wrap gap-x-2 gap-y-1 mt-1 ${isUser ? "justify-end" : "justify-start"}`}>
+                                {markers.map((m, i) => {
+                                  const meta = MARKER_META[m];
+                                  if (!meta) return null;
+                                  return (
+                                    <span key={i} className={`text-[10px] font-bold ${meta.color}`}>
+                                      {meta.icon} {meta.label}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    // 대화 내용이 없으면(새로고침 등) 기존처럼 턴별 마커만이라도 보여준다.
+                    <div className="space-y-2">
+                      {report.timeline.map((item, idx) => (
+                        <div key={idx} className="flex items-start space-x-2.5">
+                          <span className="text-[10px] font-mono font-bold text-gray-400 w-4 shrink-0 mt-0.5">
+                            {item.turn}
+                          </span>
+                          <div className="flex-1 min-w-0 flex flex-wrap gap-x-2 gap-y-1">
+                            {(item.markers || []).map((m, i) => {
+                              const meta = MARKER_META[m];
+                              if (!meta) return null;
+                              return (
+                                <span key={i} className={`text-[10px] font-bold ${meta.color}`}>
+                                  {meta.icon} {meta.label}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="pt-3 mt-3 border-t border-gray-200 flex flex-wrap gap-x-3 gap-y-1">
                     {Object.values(MARKER_META).map((m, i) => (
                       <span key={i} className="text-[9px] text-gray-400">
                         {m.icon} {m.label}
@@ -330,36 +459,36 @@ export default function Report() {
           )}
 
         </div>
+        </div>
 
         {/* ───────── 하단 버튼 ───────── */}
         <div className="p-4 mt-2 space-y-2 bg-white">
-          {shareToast && (
-            <div className="bg-gray-800 text-white text-[11px] text-center py-2 rounded-xl animate-fade-in">
-              🔗 링크가 클립보드에 복사되었습니다!
-            </div>
-          )}
-
-          {downloadToast && (
-            <div className="bg-emerald-600 text-white text-[11px] text-center py-2 rounded-xl animate-fade-in">
-              📄 부착용 안심 수칙 카드 생성 중...
+          {toast && (
+            <div
+              className={`text-white text-[11px] text-center py-2 px-3 rounded-xl animate-fade-in break-keep ${
+                toast.type === "error" ? "bg-red-500" : "bg-gray-800"
+              }`}
+            >
+              {toast.text}
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={handleShare}
-              className="bg-[#0052CC] text-white py-3 rounded-xl text-xs font-bold shadow-md shadow-blue-500/20 hover:bg-blue-700 transition active:scale-[0.99] flex items-center justify-center space-x-1"
+              onClick={handleSaveImage}
+              disabled={saving}
+              className="bg-[#0052CC] text-white py-3 rounded-xl text-xs font-bold shadow-md shadow-blue-500/20 hover:bg-blue-700 transition active:scale-[0.99] flex items-center justify-center space-x-1 disabled:opacity-60"
             >
-              <span>👨‍👩‍👧‍👦</span>
-              <span>가족 공유</span>
+              <span>🖼️</span>
+              <span>{saving ? "저장 중..." : "결과 이미지 저장"}</span>
             </button>
 
             <button
-              onClick={handleExportPrintable}
-              className="bg-amber-500 text-white py-3 rounded-xl text-xs font-bold shadow-md shadow-amber-500/20 hover:bg-amber-600 transition active:scale-[0.99] flex items-center justify-center space-x-1"
+              onClick={handleShareService}
+              className="bg-emerald-500 text-white py-3 rounded-xl text-xs font-bold shadow-md shadow-emerald-500/20 hover:bg-emerald-600 transition active:scale-[0.99] flex items-center justify-center space-x-1"
             >
-              <span>🧲</span>
-              <span>부착용 카드 인쇄</span>
+              <span>👨‍👩‍👧‍👦</span>
+              <span>가족에게 권하기</span>
             </button>
           </div>
 

@@ -1,18 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
-
-function readStoredUserName() {
-  try {
-    const savedData = localStorage.getItem("userSurveyData");
-    if (!savedData) return "고객";
-
-    const parsed = JSON.parse(savedData);
-    return parsed?.userName || "고객";
-  } catch {
-    return "고객";
-  }
-}
+import { useTrainee } from "../hooks/useTrainee";
 
 function readPrevTrack() {
   return localStorage.getItem("selectedScenario") ? "ai" : "direct";
@@ -20,8 +9,11 @@ function readPrevTrack() {
 
 export default function CallIncoming() {
   const navigate = useNavigate();
-  const [userName] = useState(readStoredUserName);
+  const { trainee } = useTrainee();
   const [prevTrack] = useState(readPrevTrack);
+
+  // 새로고침 등으로 Context 가 비면 기본 호칭으로 표시한다 (저장하지 않는 값이라 자연스러운 동작).
+  const userName = trainee.name || "고객";
 
   const handleDecline = () => {
     if (prevTrack === "ai") {

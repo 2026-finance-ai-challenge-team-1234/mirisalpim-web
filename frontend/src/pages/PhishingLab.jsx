@@ -103,7 +103,7 @@ export default function PhishingLab() {
   const foundDangerCount = selected.filter((id) => QUIZ_MARKERS[id].isDanger).length;
 
   const [loginId, setLoginId] = useState("hong1234");
-  const [loginPw, setLoginPw] = useState("test8282!");
+  const [loginPw, setLoginPw] = useState(""); // 직접 입력하면서 마스킹 안 되는 걸 실시간으로 체감하게 함
   const [loginSubmitted, setLoginSubmitted] = useState(false);
 
   const [paymentClicked, setPaymentClicked] = useState(false);
@@ -143,7 +143,16 @@ export default function PhishingLab() {
         <PageHeader
           onBack={goBack}
           padding="pt-1 pb-4 mb-2"
-          rightContent={step > 0 ? <StepBadge step={step} total={TOTAL_STEPS} /> : null}
+          rightContent={
+            step > 0 && step <= TOTAL_STEPS ? (
+              <StepBadge step={step} total={TOTAL_STEPS} />
+            ) : step > TOTAL_STEPS ? (
+              // 요약 화면은 STEP 범위 밖이라 "STEP 5 / 4"처럼 표기되면 안 됨
+              <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+                체험 완료
+              </span>
+            ) : null
+          }
         />
 
         {step === 0 && (
@@ -296,9 +305,9 @@ export default function PhishingLab() {
 
         {step === 2 && (
           <div className="flex-1 flex flex-col">
-            <h2 className="text-base font-extrabold text-[#191F28] mb-1">아래 정보로 로그인해보세요</h2>
+            <h2 className="text-base font-extrabold text-[#191F28] mb-1">직접 로그인해보세요</h2>
             <p className="text-[11px] text-[#8B95A1] mb-4 break-keep">
-              체험용 계정입니다. 아이디와 비밀번호가 이미 입력되어 있어요.
+              체험용 화면입니다. 아무 비밀번호나 입력하면서 화면을 살펴보세요.
             </p>
 
             <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
@@ -318,23 +327,37 @@ export default function PhishingLab() {
                     placeholder="아이디"
                   />
                   <div>
+                    {/* type="text"라 입력하는 즉시 비밀번호가 그대로 노출됨 — 이게 체험 포인트 */}
                     <input
                       type="text"
                       value={loginPw}
                       onChange={(e) => setLoginPw(e.target.value)}
                       className="w-full p-3 rounded-xl border-2 border-red-300 text-xs focus:border-red-400 focus:outline-none tracking-wide"
-                      placeholder="비밀번호"
+                      placeholder="비밀번호를 입력해보세요"
                     />
-                    <p className="text-[10px] text-red-500 font-bold mt-1.5 flex items-center space-x-1">
-                      <span>⚠️</span>
-                      <span>비밀번호가 ●●●로 가려지지 않고 그대로 보이고 있어요</span>
-                    </p>
+                    {loginPw ? (
+                      <p className="text-[10px] text-red-500 font-bold mt-1.5 flex items-start space-x-1">
+                        <span className="shrink-0">⚠️</span>
+                        <span className="break-keep">
+                          입력한 비밀번호가 ●●●로 가려지지 않고 그대로 보이고 있어요
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-gray-400 mt-1.5 break-keep">
+                        아무 비밀번호나 입력해보세요. 실제 비밀번호는 절대 입력하지 마세요.
+                      </p>
+                    )}
                   </div>
                 </div>
 
                 <button
                   onClick={() => setLoginSubmitted(true)}
-                  className="w-full bg-[#0052CC] text-white py-3 rounded-xl text-xs font-bold mt-4 hover:bg-blue-700 transition"
+                  disabled={!loginPw.trim()}
+                  className={`w-full py-3 rounded-xl text-xs font-bold mt-4 transition ${
+                    loginPw.trim()
+                      ? "bg-[#0052CC] text-white hover:bg-blue-700"
+                      : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                  }`}
                 >
                   로그인하기
                 </button>
@@ -468,12 +491,54 @@ export default function PhishingLab() {
             </div>
 
             {otpSubmitted && (
-              <div className="mt-2 bg-red-600 text-white rounded-2xl p-4 animate-fade-in">
-                <span className="text-2xl block mb-1.5">🚨</span>
-                <h4 className="text-sm font-extrabold mb-1.5">인증번호가 탈취되었습니다!</h4>
-                <p className="text-[11px] leading-relaxed opacity-90 break-keep">
-                  실제 상황이었다면 방금 입력한 인증번호가 피싱범에게 그대로 전송되어, 수 초 안에 결제나 계좌이체가 진행되었을 것입니다. 인증번호(OTP)는 어떤 상황에서도 타인에게 알려주면 안 됩니다.
-                </p>
+              <div className="mt-2 space-y-2 animate-fade-in">
+                <div className="bg-red-600 text-white rounded-2xl p-4">
+                  <span className="text-2xl block mb-1.5">🚨</span>
+                  <h4 className="text-sm font-extrabold mb-1.5">인증번호가 탈취되었습니다!</h4>
+                  <p className="text-[11px] leading-relaxed opacity-90 break-keep">
+                    실제 상황이었다면 방금 입력한 인증번호가 피싱범에게 그대로 전송되어, 수 초 안에 결제나 계좌이체가 진행되었을 것입니다.
+                  </p>
+                </div>
+
+                {/* 인증번호가 왜 위험한지, 그리고 어디에만 입력해야 하는지 구체적으로 안내 */}
+                <div className="bg-[#F8F9FA] border border-gray-200 rounded-2xl p-4">
+                  <h4 className="text-xs font-extrabold text-[#191F28] mb-2 flex items-center space-x-1">
+                    <span>🔐</span>
+                    <span>인증번호(OTP)를 알려주면 안 되는 이유</span>
+                  </h4>
+                  <ul className="space-y-1.5">
+                    <li className="text-[11px] text-gray-600 leading-relaxed flex items-start space-x-1.5 break-keep">
+                      <span className="text-red-500 font-bold shrink-0">▪</span>
+                      <span>
+                        인증번호는 <b className="text-[#191F28]">"내가 지금 이 결제·이체를 승인한다"</b>는 최종 서명과 같습니다.
+                        번호를 넘기는 순간 상대가 내 이름으로 거래를 완료할 수 있습니다.
+                      </span>
+                    </li>
+                    <li className="text-[11px] text-gray-600 leading-relaxed flex items-start space-x-1.5 break-keep">
+                      <span className="text-red-500 font-bold shrink-0">▪</span>
+                      <span>
+                        보통 <b className="text-[#191F28]">3분 안에 만료</b>되기 때문에, 범인은 시간을 압박하며 서두르게 만듭니다.
+                        재촉당한다면 그 자체가 위험 신호입니다.
+                      </span>
+                    </li>
+                    <li className="text-[11px] text-gray-600 leading-relaxed flex items-start space-x-1.5 break-keep">
+                      <span className="text-red-500 font-bold shrink-0">▪</span>
+                      <span>
+                        문자에 적힌 <b className="text-[#191F28]">"타인에게 알려주지 마세요"</b> 문구가 곧 정답입니다.
+                        상담원·수사관·가족 누구에게도 알려줄 필요가 없습니다.
+                      </span>
+                    </li>
+                  </ul>
+
+                  <div className="mt-3 pt-3 border-t border-gray-200">
+                    <p className="text-[11px] font-extrabold text-emerald-700 mb-1.5">✅ 인증번호는 여기에만 입력하세요</p>
+                    <p className="text-[11px] text-gray-600 leading-relaxed break-keep">
+                      내가 직접 설치한 <b className="text-[#191F28]">은행·카드사 공식 앱</b>이나
+                      <b className="text-[#191F28]"> 공식 인증 앱</b>에서, <b className="text-[#191F28]">내가 먼저 시작한 거래</b>를 진행할 때만 입력합니다.
+                      전화·문자로 받은 링크를 눌러 열린 화면이라면, 아무리 진짜처럼 보여도 입력하지 마세요.
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
 

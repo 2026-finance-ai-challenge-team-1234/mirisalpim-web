@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiPost } from "../api/client";
 import PageHeader from "../components/PageHeader";
+import { useTrainee } from "../hooks/useTrainee";
 
 export default function UserInfo() {
   const navigate = useNavigate();
+  const { setTrainee } = useTrainee();
 
   const [userName, setUserName] = useState("");
   const [age, setAge] = useState("");
@@ -36,12 +38,9 @@ export default function UserInfo() {
     setSubmitting(false);
     setShowNoticeModal(false);
 
-    const userInfo = {
-      userName: userName.trim(),
-      age: age.trim(),
-      address: address.trim(),
-    };
-    localStorage.setItem("userSurveyData", JSON.stringify(userInfo));
+    // 개인정보는 저장하지 않고 메모리(Context)에만 담아 다음 화면으로 나른다.
+    // 백엔드도 이 값을 DB 에 넣지 않고 프롬프트에만 쓴다 (backend/training/trainee.py).
+    setTrainee({ name: userName.trim(), age: age.trim(), address: address.trim() });
 
     const selectedCategory = localStorage.getItem("selectedCategory");
 
