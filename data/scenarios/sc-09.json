@@ -20,10 +20,10 @@
   "learning_objectives": [],
   "max_turns": 20,
   "persona": {
-    "display_name": "가상 위협 발신자",
+    "display_name": "위협 발신자",
     "name": "",
     "org": "",
-    "role": "가상 위협 발신자",
+    "role": "위협 발신자",
     "tone": "짧고 단정적인 말투. 긴박함을 주되 구체적인 위협 표현은 쓰지 않는다.",
     "rules": [
       "한 번에 하나의 질문 또는 상황 확인만 함",

@@ -28,7 +28,7 @@
   "persona": {
     "display_name": "집행 안내 담당자",
     "name": "",
-    "org": "○○지방법원",
+    "org": "한양지방법원",
     "role": "문자 발신자",
     "tone": "위압적인 공문 투. 절차가 이미 진행 중인 것처럼 말한다.",
     "rules": [
@@ -54,7 +54,7 @@
       "advance_when": [
         "훈련생이 메시지에 반응하거나 내용을 확인하려 함"
       ],
-      "opening": "[○○지방법원] 벌과금 미납으로 재산 조회 절차가 개시되었습니다. 전자문서 확인 https://court-doc.example/e5"
+      "opening": "[한양지방법원] 벌과금 미납으로 재산 조회 절차가 개시되었습니다. 전자문서 확인 https://court-doc.example/e5"
     },
     {
       "id": "context_check",

@@ -21,6 +21,7 @@ check_safety() 를 동기 호출하면 llm.py 의 스트림 소비 루프(on_del
 
 from __future__ import annotations
 
+import logging
 import queue
 import re
 import threading
@@ -31,10 +32,32 @@ from .agents.safety import check_safety
 from .cost import Usage
 from .prompts import SAFETY_FALLBACK_TEXT
 
+logger = logging.getLogger(__name__)
+
 #: 문장 종결부호(.!?…) 뒤에 공백 또는 문자열 끝이 와야 경계로 본다.
-#: "hanbit-secure.example" 같은 더미 도메인의 마침표는 뒤에 공백 없이 문자가
+#: "salpim-secure.example" 같은 더미 도메인의 마침표는 뒤에 공백 없이 문자가
 #: 바로 붙으므로 경계로 잡히지 않는다.
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?…])(?=\s|$)")
+
+#: TTS 가 글자 그대로 읽어버리는 마스킹 문자. "○○지방검찰청" 은 훈련생 귀에
+#: "빈 원 빈 원 지방검찰청" 으로 들린다. 카드 데이터와 SCAMMER_CORE 에서 ○ 를 모두
+#: 걷어냈지만, 모델이 스스로 만들어내는 경우가 남는다.
+_MASK_CHARS = re.compile(r"[○◯◦●□■]+")
+
+
+def strip_mask_chars(text: str) -> str:
+    """마스킹 문자를 걷어낸 발화를 돌려준다.
+
+    자막과 음성이 반드시 같은 문자열이어야 하므로, 발화가 확정되는 한 지점에서만
+    적용한다. TTS 직전에 적용하면 화면에는 ○ 가 남고 소리에서만 사라져 어긋난다.
+    """
+    if not _MASK_CHARS.search(text):
+        return text
+    cleaned = _MASK_CHARS.sub("", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    logger.warning("발화에서 마스킹 문자를 제거했습니다 - 프롬프트·카드 회귀 가능성")
+    return cleaned
+
 
 #: 워커 종료 신호
 _DONE = object()
@@ -129,6 +152,9 @@ class StreamingSafetyGate:
                 self.violations = ["safety_check_failed"]
 
     def _check_and_emit(self, sentence: str) -> None:
+        # 자막(downstream)·음성(TTS)·transcript 가 모두 이 한 문자열을 쓴다.
+        # 여기서 걷어내야 셋이 어긋나지 않는다.
+        sentence = strip_mask_chars(sentence)
         result = check_safety(sentence)
         self.usage.add(result.usage)
         if result.blocked:

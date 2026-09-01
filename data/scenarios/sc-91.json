@@ -28,7 +28,7 @@
   "persona": {
     "display_name": "주민등록 담당자",
     "name": "",
-    "org": "○○구청",
+    "org": "한양구청",
     "role": "문자 발신자",
     "tone": "공적이고 단정적. 협조 의무를 강조한다.",
     "rules": [
@@ -54,7 +54,7 @@
       "advance_when": [
         "훈련생이 메시지에 반응하거나 내용을 확인하려 함"
       ],
-      "opening": "[○○구청] 주민등록 사실조사 미응답 세대로 확인되었습니다. 미응답 시 과태료가 부과될 수 있습니다. https://resident-check.example/r6"
+      "opening": "[한양구청] 주민등록 사실조사 미응답 세대로 확인되었습니다. 미응답 시 과태료가 부과될 수 있습니다. https://resident-check.example/r6"
     },
     {
       "id": "context_check",

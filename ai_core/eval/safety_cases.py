@@ -137,12 +137,12 @@ CASES: list[SafetyCase] = [
     # ── 안전 (허용된 더미 패턴 포함, 오탐 확인용) ──────────────────
     SafetyCase(
         "safe_1",
-        "한빛은행 계좌번호 000-00-000000 으로 안전하게 이체하시면 됩니다.",
+        "살핌은행 계좌번호 000-00-000000 으로 안전하게 이체하시면 됩니다.",
         False,
     ),
     SafetyCase(
         "safe_2",
-        "hanbit-secure.example 사이트에서 본인 확인을 진행해 주세요.",
+        "salpim-secure.example 사이트에서 본인 확인을 진행해 주세요.",
         False,
     ),
     SafetyCase(
