@@ -89,6 +89,10 @@ class TurnOutcome:
     blocked: bool = False
     #: 차단 사유 (role_break/prompt_leak/real_url/real_account/real_org). use_safety=False 면 빈 리스트
     safety_violations: list[str] = field(default_factory=list)
+    #: 판정기 모델 호출 지연. 음성 파이프라인 계측용이며 DB 에 저장하지 않는다.
+    judge_latency_ms: int = 0
+    #: 문장별 안전 필터 모델 호출 지연. 승인/차단 순서대로 기록한다.
+    safety_latency_ms: list[int] = field(default_factory=list)
 
 
 def step(
@@ -120,12 +124,14 @@ def step(
     risky_actions: list[str] = []
     resisted: bool | None = None
     advance_proposed: bool | None = None
+    judge_latency_ms = 0
 
     if use_judge:
         # 최종 단계에서도 판정기는 호출한다 — advance_stage 제안은 try_advance_stage()가
         # is_final_stage 로 어차피 무시하지만, risky_actions/resisted 관찰은 extraction
         # 단계(송금 동의 등 가장 중요한 위험행동이 실제로 일어나는 곳)에서도 필요하다.
         judgment = generate_judge_turn(scenario, state)
+        judge_latency_ms = judgment.latency_ms
         apply_judgment(state, judgment.risky_actions, judgment.resisted)
         proposed = judgment.advance_stage
         advance_proposed = judgment.advance_stage
@@ -148,6 +154,7 @@ def step(
             risky_actions=risky_actions,
             resisted=resisted,
             advance_proposed=advance_proposed,
+            judge_latency_ms=judge_latency_ms,
         )
 
     state.turn += 1
@@ -155,6 +162,7 @@ def step(
 
     blocked = False
     safety_violations: list[str] = []
+    safety_latency_ms: list[int] = []
 
     if use_safety:
         gate = StreamingSafetyGate(downstream=on_delta)
@@ -171,6 +179,7 @@ def step(
         scammer_text = gate.display_text
         blocked = gate.blocked
         safety_violations = gate.violations
+        safety_latency_ms = list(gate.latency_ms)
     else:
         result = generate_scammer_turn(scenario, state, on_delta)
         usage.add(result.usage)
@@ -199,6 +208,8 @@ def step(
         advance_proposed=advance_proposed,
         blocked=blocked,
         safety_violations=safety_violations,
+        judge_latency_ms=judge_latency_ms,
+        safety_latency_ms=safety_latency_ms,
     )
 
 

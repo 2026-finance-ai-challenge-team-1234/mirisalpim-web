@@ -88,6 +88,8 @@ class StreamingSafetyGate:
     blocked: bool = False
     violations: list[str] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
+    #: 문장별 안전 필터 모델 지연. 운영 계측용이며 대화 상태에는 저장하지 않는다.
+    latency_ms: list[int] = field(default_factory=list)
 
     _queue: queue.Queue = field(default_factory=queue.Queue, init=False, repr=False)
     _worker: threading.Thread = field(init=False, repr=False)
@@ -156,6 +158,7 @@ class StreamingSafetyGate:
         # 여기서 걷어내야 셋이 어긋나지 않는다.
         sentence = strip_mask_chars(sentence)
         result = check_safety(sentence)
+        self.latency_ms.append(result.latency_ms)
         self.usage.add(result.usage)
         if result.blocked:
             self.blocked = True
