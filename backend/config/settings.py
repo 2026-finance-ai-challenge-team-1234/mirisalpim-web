@@ -49,6 +49,33 @@ SECRET_KEY = os.environ["SECRET_KEY"]
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 
+
+def _int_env(name, default):
+    """정수 환경변수. 잘못된 값이면 경고만 남기고 기본값으로 계속 뜬다.
+
+    ⚠️ 여기서 int() 가 그대로 ValueError 를 올리면 settings import 가 끊겨
+    워커가 부팅 중에 죽는다 - 첫 요청에 500 이 나는 게 아니라 크래시 루프가 된다
+    (ai_core/llm.py 의 validate_config() 와 같은 종류의 함정). Railway 변수 UI 에
+    "86400 # 하루" 처럼 주석을 같이 적는 실수가 배포를 통째로 막으면 안 된다.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"[설정 경고] {name}={raw!r} 가 정수가 아니어서 {default} 를 사용합니다.")
+        return default
+
+
+# 음성 레이턴시 벤치마크가 요청한 경우에만 상세 SSE timing 이벤트를 노출한다.
+# 단계별 서버 로그는 원문·사용자 식별자 없이 항상 남지만, API 응답의 내부 지표는
+# 운영에서 명시적으로 켜지 않는 한 숨긴다.
+VOICE_LATENCY_DIAGNOSTICS = (
+    os.environ.get("VOICE_LATENCY_DIAGNOSTICS", "False").lower() == "true"
+)
+OPENING_AUDIO_CACHE_SECONDS = _int_env("OPENING_AUDIO_CACHE_SECONDS", 86400)
+
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get(
@@ -123,6 +150,21 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
+
+# 캐시
+# 기본값(LocMemCache, MAX_ENTRIES=300)을 그대로 쓰면 opening TTS 캐시가 레이트리밋·
+# 멱등성 키와 300칸을 나눠 쓴다. 실측하면 경쟁 엔트리가 약 238개를 넘는 순간
+# 컬링이 오래된 키부터 반복 적용돼 voice opening 62개가 한 번에 전부 날아간다
+# (점진적 감소가 아니라 절벽이다). 그러면 세션 시작마다 TTS 를 다시 기다린다.
+# 값 62개를 다 담아도 5MB 남짓이라 한도를 올리는 편이 싸다.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "mirisalpim-default",
+        "OPTIONS": {"MAX_ENTRIES": 2000},
+    }
+}
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators

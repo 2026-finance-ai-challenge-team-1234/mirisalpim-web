@@ -25,7 +25,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client, TestCase, TransactionTestCase
+from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from .diagnosis import _official_links
@@ -46,6 +46,7 @@ from .views import (
     MAX_INPUT_CHARS,
     ConcurrentTurnError,
     _commit_turn,
+    _opening_audio,
     _voice_audio,
 )
 
@@ -1414,8 +1415,9 @@ class TurnStreamTests(TransactionTestCase):
             body = drain(response)
         return response, parse_sse(body)
 
-    def audio_stream(self, session_id, heard, synthesized=None):
+    def audio_stream(self, session_id, heard, synthesized=None, timing=False):
         synthesized = synthesized or ["YXVkaW8tMQ==", "YXVkaW8tMg=="]
+        query = "?timing=1" if timing else ""
         with patch("training.views.transcribe", return_value=heard):
             with patch(
                 "training.views.step",
@@ -1427,7 +1429,7 @@ class TurnStreamTests(TransactionTestCase):
                     "training.views.synthesize_b64", side_effect=synthesized
                 ) as synthesize:
                     response = self.client.post(
-                        f"/api/v1/training-sessions/{session_id}/turns/audio/stream",
+                        f"/api/v1/training-sessions/{session_id}/turns/audio/stream{query}",
                         data=b"fake-webm-bytes",
                         content_type="audio/webm",
                     )
@@ -1502,6 +1504,33 @@ class TurnStreamTests(TransactionTestCase):
         self.assertEqual(events[-1][0], "done")
         self.assertFalse(events[-1][1]["audioComplete"])
         self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 3)
+
+    @override_settings(VOICE_LATENCY_DIAGNOSTICS=True)
+    def test_audio_stream_emits_opt_in_timing_without_user_content(self):
+        session_id = self.start_training()
+
+        _, events, _ = self.audio_stream(session_id, "민감한 원문", timing=True)
+
+        names = [name for name, _ in events]
+        self.assertEqual(names[-2:], ["timing", "done"])
+        timing = next(data for name, data in events if name == "timing")
+        self.assertEqual(
+            set(timing),
+            {
+                "scenarioId", "sttMs", "acceptedMs", "judgeMs", "scammerFirstTokenMs",
+                "scammerTotalMs", "firstApprovedSentenceMs", "safetySentenceMs",
+                "ttsSentenceMs", "firstAudioEventMs", "totalMs",
+            },
+        )
+        self.assertNotIn("민감한 원문", json.dumps(timing, ensure_ascii=False))
+
+    @override_settings(VOICE_LATENCY_DIAGNOSTICS=False)
+    def test_audio_stream_hides_timing_by_default(self):
+        session_id = self.start_training()
+
+        _, events, _ = self.audio_stream(session_id, "네", timing=True)
+
+        self.assertNotIn("timing", [name for name, _ in events])
 
     def test_audio_stream_masks_recognised_pii_before_display_and_storage(self):
         session_id = self.start_training()
@@ -2316,6 +2345,30 @@ class VoiceTurnTests(TestCase):
         payload = self.start()
 
         self.assertEqual(payload["openingAudio"], "ZmFrZQ==")
+
+    def test_opening_audio_is_cached_by_scenario_voice_and_text(self):
+        scenario = load_scenario("sc-01")
+
+        with patch("training.views._voice_audio", return_value="Y2FjaGVk") as synthesize:
+            first = _opening_audio(scenario, "고정 시작 문장입니다.")
+            second = _opening_audio(scenario, "고정 시작 문장입니다.")
+
+        self.assertEqual(first, "Y2FjaGVk")
+        self.assertEqual(second, first)
+        synthesize.assert_called_once()
+
+    def test_failed_opening_audio_is_not_cached(self):
+        scenario = load_scenario("sc-01")
+
+        with patch(
+            "training.views._voice_audio", side_effect=[None, "cmVjb3ZlcmVk"]
+        ) as synthesize:
+            self.assertIsNone(_opening_audio(scenario, "재시도 문장입니다."))
+            self.assertEqual(
+                _opening_audio(scenario, "재시도 문장입니다."), "cmVjb3ZlcmVk"
+            )
+
+        self.assertEqual(synthesize.call_count, 2)
 
     def test_audio_turn_returns_what_the_user_said(self):
         session_id = self.start()["sessionId"]

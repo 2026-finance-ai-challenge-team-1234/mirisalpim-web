@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import random
@@ -12,6 +13,8 @@ from asgiref.sync import sync_to_async
 from ai_core.types import RiskyAction as EngineRiskyAction
 from ai_core.types import UserJudgment as EngineJudgment
 from django.db import IntegrityError, connections, transaction
+from django.conf import settings
+from django.core.cache import cache
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -61,6 +64,28 @@ TTS_TIMEOUT_SECONDS = 15
 #: 업로드 음성 상한. 한 턴 발화는 길어야 30초 남짓이고, webm/opus 30초가 대략
 #: 250KB 다. 넉넉히 잡되 무제한으로 두지 않는다.
 MAX_AUDIO_BYTES = 2 * 1024 * 1024
+
+
+def _elapsed_ms(started):
+    """monotonic 기준 경과 시간. 시스템 시각 변경의 영향을 받지 않는다."""
+    return max(0, round((time.monotonic() - started) * 1000))
+
+
+def _voice_timing_payload(trace, outcome):
+    """음성 한 턴의 비식별 성능 지표를 API/로그 공통 형태로 만든다."""
+    return {
+        "scenarioId": trace.get("scenarioId"),
+        "sttMs": trace["sttMs"],
+        "acceptedMs": trace.get("acceptedMs"),
+        "judgeMs": outcome.judge_latency_ms,
+        "scammerFirstTokenMs": outcome.first_token_ms,
+        "scammerTotalMs": outcome.latency_ms,
+        "firstApprovedSentenceMs": trace.get("firstApprovedSentenceMs"),
+        "safetySentenceMs": outcome.safety_latency_ms,
+        "ttsSentenceMs": trace.get("ttsSentenceMs", []),
+        "firstAudioEventMs": trace.get("firstAudioEventMs"),
+        "totalMs": _elapsed_ms(trace["started"]),
+    }
 
 
 def ensure_anon_client_id(session):
@@ -326,7 +351,7 @@ def start_training(request):
             "maxTurns": scenario.max_turns,
             "turnNo": opening.turn,
             "opening": opening.text,
-            "openingAudio": _voice_audio(scenario, opening.text),
+            "openingAudio": _opening_audio(scenario, opening.text),
         },
         status=201,
     )
@@ -341,6 +366,27 @@ def _voice_audio(scenario, text):
     if scenario.category != "voice":
         return None
     return synthesize_b64(text, scenario.persona.voice_preset)
+
+
+def _opening_audio(scenario, text):
+    """시나리오별 고정 opening TTS를 성공한 경우에만 캐시한다.
+
+    훈련생 발화나 개인정보가 섞이지 않는 정적 문장만 대상이다. 음성 API가 잠시
+    실패해 None 이 된 결과는 캐시하지 않아 다음 세션에서 복구를 재시도한다.
+    """
+    if scenario.category != "voice":
+        return None
+    fingerprint = hashlib.sha256(
+        f"{scenario.persona.voice_preset}\0{text}".encode("utf-8")
+    ).hexdigest()
+    key = f"opening-audio:v1:{scenario.scenario_id}:{fingerprint}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    audio = _voice_audio(scenario, text)
+    if audio:
+        cache.set(key, audio, timeout=settings.OPENING_AUDIO_CACHE_SECONDS)
+    return audio
 
 
 #: 위험 신호에 개입 문구를 붙인다 (기능명세 F-14). 앞의 5종은 판정기가 관찰한
@@ -970,7 +1016,10 @@ def turn_audio_stream(request, session_id):
     때까지 기다리지 않고, 안전 게이트가 승인한 문장부터 자막(delta)과 음성(audio)을
     내보낸다. 문장 TTS가 도는 동안 AI 코어 워커는 다음 문장을 계속 생성한다.
     """
+    timing_trace = {"started": time.monotonic(), "ttsSentenceMs": []}
+    stt_started = time.monotonic()
     text, anon_client_id, trainee_raw, failure = _transcribe_audio_request(request)
+    timing_trace["sttMs"] = _elapsed_ms(stt_started)
     if failure is not None:
         return failure
 
@@ -978,6 +1027,7 @@ def turn_audio_stream(request, session_id):
     if failure is not None:
         return failure
     scenario, state, loaded_turn = context
+    timing_trace["scenarioId"] = scenario.scenario_id
     apply_trainee(state, *trainee_from_body({"trainee": trainee_raw}))
 
     masked_text, detected_pii = mask_pii(text)
@@ -992,6 +1042,11 @@ def turn_audio_stream(request, session_id):
             detected_pii,
             include_audio=True,
             user_text=masked_text,
+            timing_trace=timing_trace,
+            emit_timing=(
+                settings.VOICE_LATENCY_DIAGNOSTICS
+                and request.GET.get("timing") == "1"
+            ),
         )
     )
 
@@ -1020,10 +1075,14 @@ async def _turn_events(
     include_audio=False,
     user_text=None,
     link_clicked=False,
+    timing_trace=None,
+    emit_timing=False,
 ):
     accepted = {"turnNo": loaded_turn + 1}
     if user_text is not None:
         accepted["userText"] = user_text
+    if timing_trace is not None:
+        timing_trace["acceptedMs"] = _elapsed_ms(timing_trace["started"])
     yield _sse("accepted", accepted)
 
     # 정규식으로 잡은 개인정보는 LLM 을 기다릴 필요가 없다 - 즉시 개입한다 (F-14).
@@ -1089,10 +1148,15 @@ async def _turn_events(
             break
         # 안전 필터를 통과한 문장만 여기 도착한다 (StreamingSafetyGate).
         sequence += 1
+        if timing_trace is not None and "firstApprovedSentenceMs" not in timing_trace:
+            timing_trace["firstApprovedSentenceMs"] = _elapsed_ms(
+                timing_trace["started"]
+            )
         yield _sse("delta", {"sequence": sequence, "text": item})
         if include_audio:
             # 동기 Google TTS 호출은 이벤트 루프 밖에서 실행한다. 기다리는 동안에도
             # AI 코어 워커는 다음 문장을 생성·검사해 deltas 큐에 쌓을 수 있다.
+            tts_started = time.monotonic()
             try:
                 audio = await asyncio.wait_for(
                     asyncio.to_thread(_voice_audio, scenario, item),
@@ -1101,7 +1165,14 @@ async def _turn_events(
             except (asyncio.TimeoutError, TimeoutError):
                 logger.warning("tts 시간 초과 - sequence=%s", sequence)
                 audio = None
+            finally:
+                if timing_trace is not None:
+                    timing_trace["ttsSentenceMs"].append(_elapsed_ms(tts_started))
             if audio:
+                if timing_trace is not None and "firstAudioEventMs" not in timing_trace:
+                    timing_trace["firstAudioEventMs"] = _elapsed_ms(
+                        timing_trace["started"]
+                    )
                 yield _sse(
                     "audio",
                     {
@@ -1148,6 +1219,24 @@ async def _turn_events(
     }
     if include_audio:
         done["audioComplete"] = audio_complete
+    # 계측은 부가 기능이다. 이 자리는 _commit_turn 성공 뒤이자 done 앞이라, 여기서
+    # 예외가 나면 턴은 DB 에 저장된 채 클라이언트만 done 을 못 받고 스트림이 끊긴다
+    # (서버는 진행, 화면은 실패). 지표 하나 때문에 대화가 깨지지 않게 격리한다.
+    timing_payload = None
+    if timing_trace is not None:
+        try:
+            timing_payload = _voice_timing_payload(timing_trace, outcome)
+            logger.info(
+                "voice_latency scenario=%s metrics=%s",
+                scenario.scenario_id,
+                json.dumps(timing_payload, ensure_ascii=False, separators=(",", ":")),
+            )
+        except Exception:
+            logger.exception("voice latency 계측 실패")
+            timing_payload = None
+
+    if emit_timing and timing_payload is not None:
+        yield _sse("timing", timing_payload)
     yield _sse("done", done)
 
 
