@@ -22,6 +22,35 @@ SIGNAL_TYPES = {"risk", "legitimacy"}
 END_RESULTS = {"training_success", "terminate", "safety_stop"}
 SOURCE_REVIEW_STATUSES = {"human_reviewed", "auto_labeled"}
 
+#: TTS 가 글자 그대로 읽어버리는 마스킹 문자. "○○지방검찰청" 은 훈련생 귀에
+#: "빈 원 빈 원 지방검찰청" 으로 들려 음성 훈련이 성립하지 않는다.
+MASK_CHARS = "○◯◦●□■"
+
+#: 카드 작성용 메타 표기. prompts.scenario_block 이 tactics·persona 를 그대로 프롬프트에
+#: 실으므로, 남아 있으면 사기범이 이 말을 그대로 한다.
+META_MARKERS = ("placeholder", "훈련용 링크", "[훈련용", "가상 브랜드")
+
+#: 검증에서 제외할 필드. 결과 리포트 전용이라 프롬프트·화면·음성으로 나가지 않는다.
+#: (정상 시나리오의 source 는 "훈련용 정상 비교 사례 ..." 형식이 규약이다)
+_REPORT_ONLY = {"source", "source_refs", "source_review_status"}
+
+
+def prompt_facing(card: dict[str, Any], _path: str = "") -> "list[tuple[str, str]]":
+    """프롬프트·화면·음성으로 나가는 문자열만 (경로, 값) 으로 모은다."""
+    out: list[tuple[str, str]] = []
+    if isinstance(card, dict):
+        for k, v in card.items():
+            if not _path and k in _REPORT_ONLY:
+                continue
+            out += prompt_facing(v, f"{_path}.{k}" if _path else k)
+    elif isinstance(card, list):
+        for i, v in enumerate(card):
+            out += prompt_facing(v, f"{_path}[{i}]")
+    elif isinstance(card, str):
+        out.append((_path, card))
+    return out
+
+
 #: scenario.md 의 분류 코드. T=보이스피싱, S=스미싱, 뒤에 대분류 2자리 + 세부번호
 TRACK_PATTERN = r"^[TS]\d{2}-\d{1,2}$"
 
@@ -179,6 +208,21 @@ def validate(card: dict[str, Any]) -> list[str]:
     for c in card.get("end_conditions", []):
         if c["result"] not in END_RESULTS:
             e.append(f"end_condition '{c['id']}': result 허용값 아님 ({c['result']})")
+
+    for path, text in prompt_facing(card):
+        used = [ch for ch in MASK_CHARS if ch in text]
+        if used:
+            e.append(
+                f"{path}: 마스킹 문자 '{''.join(used)}' 사용 — TTS 가 글자 그대로 읽는다. "
+                "가상 기관명·인물명을 그대로 적을 것"
+            )
+        lowered = text.lower()
+        for marker in META_MARKERS:
+            if marker.lower() in lowered:
+                e.append(
+                    f"{path}: 카드 작성용 메타 표기 '{marker}' 가 남아 있음 — "
+                    "프롬프트로 나가 사기범이 그대로 말한다"
+                )
 
     return e
 

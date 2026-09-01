@@ -20,7 +20,7 @@
   "learning_objectives": [],
   "max_turns": 20,
   "persona": {
-    "display_name": "자녀(가상)",
+    "display_name": "자녀",
     "name": "자녀",
     "org": "",
     "role": "",

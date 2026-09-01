@@ -23,10 +23,10 @@
   ],
   "max_turns": 8,
   "persona": {
-    "display_name": "가상 카드배송 기사",
+    "display_name": "카드배송 기사",
     "name": "",
-    "org": "가상 배송업체",
-    "role": "가상 카드배송 기사",
+    "org": "살핌택배",
+    "role": "카드배송 기사",
     "tone": "짧고 실무적",
     "rules": [
       "배송 일정 외의 정보를 묻지 않는다",

@@ -49,7 +49,7 @@
   "persona": {
     "display_name": "통관지원팀",
     "name": "",
-    "org": "살핌",
+    "org": "살핌택배",
     "resistance_strategy": [
       "훈련생이 의심하면 해당 유형의 권위·긴급성·관계 신뢰를 저수위로 한 번만 강화한다",
       "반복 거부 또는 외부 확인 의사가 명확하면 더 강한 압박이나 실제 실행 지시로 넘어가지 않는다"
@@ -79,7 +79,7 @@
       "id": "opening",
       "min_turns": 1,
       "objective": "미끼 메시지를 보내 대화를 시작",
-      "opening": "[살핌] 해외배송 물품 통관 미납액 3,200원으로 보류 중입니다. 결제 https://salpim-parcel.example/pay",
+      "opening": "[살핌택배] 해외배송 물품 통관 미납액 3,200원으로 보류 중입니다. 결제 https://salpim-parcel.example/pay",
       "tactics": [
         "몇 천 원 수준의 소액을 제시해 경계를 낮춘다",
         "통관이라는 낯선 절차로 의심을 줄인다"

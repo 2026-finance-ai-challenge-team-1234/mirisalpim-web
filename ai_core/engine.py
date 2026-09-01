@@ -28,7 +28,7 @@ from .state import (
     record_turn,
     try_advance_stage,
 )
-from .streaming import StreamingSafetyGate
+from .streaming import StreamingSafetyGate, strip_mask_chars
 from .types import Difficulty, Scenario, SessionState
 
 #: mirisalpim-web/data/scenarios/ — ai_core 와 형제 디렉터리. Django(SCENARIO_SEED_DIR)와
@@ -174,7 +174,9 @@ def step(
     else:
         result = generate_scammer_turn(scenario, state, on_delta)
         usage.add(result.usage)
-        scammer_text = result.text
+        # 안전 필터를 끈 경로(PoC·평가용). on_delta 로는 원문 delta 가 이미 나가므로
+        # transcript·TTS 만 정리된다. 운영 경로는 use_safety=True 라 게이트가 처리한다.
+        scammer_text = strip_mask_chars(result.text)
 
     record_turn(
         state,

@@ -22,10 +22,10 @@
   ],
   "max_turns": 12,
   "persona": {
-    "display_name": "가상 가족",
+    "display_name": "가족",
     "name": "",
     "org": "가족",
-    "role": "가상 가족",
+    "role": "가족",
     "tone": "친근하고 자연스러움",
     "rules": [
       "금전·상품권·인증정보를 요구하지 않는다",
