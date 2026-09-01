@@ -93,15 +93,22 @@ AGENTS: dict[str, AgentConfig] = {
         label="판정기",
         anthropic="claude-opus-5",
         ollama="qwen3:14b",
-        gemini="gemini-3.7-flash",
+        gemini="gemini-3.5-flash-lite",
         max_tokens=1000,
         roleplay=False,
         needs_opus_features=False,
         note=(
             "structured outputs 로 단계전환·위험행동·저항 판정. "
             "gemini 경로는 response_schema 로 llm.py 에서 지원 — "
-            "gemini-2.5-flash 는 이 계정에서 404라 3.7-flash 로 대체. "
-            "정확도 검증: 4페르소나 라운드로빈 20턴 대비 20/20(100%), 기준 80%+ 통과(2026-08-19)"
+            "gemini-2.5-flash 는 이 계정에서 404라 3.x 계열을 쓴다. "
+            "정확도 검증: 3.7-flash 20/20(100%, 2026-08-19). "
+            "2026-09-01 3.5-flash-lite 로 교체 — 같은 4페르소나 라운드로빈 20턴에서 "
+            "19/20(95%), 기준 80%+ 통과. 판정 지연이 p50 6048ms→908ms, "
+            "p95 13461ms→1040ms 로 줄고 변동폭이 사라진다(음성 한 턴의 최대 구간이었다). "
+            "⚠️ 유일한 오답 유형: 이전 턴에서 이미 한 위험행동을 이번 턴에 다시 보고한다"
+            "(실측 sc-02 turn 11 의 isolation_accepted 중복). 채점 등급에는 영향이 없고"
+            "(grading 은 멤버십 검사만 한다) 개입 경고가 한 번 더 뜨는 것이 유일한 증상이다. "
+            "prompts.JUDGE_CORE 의 '이번 발화에서 새로 일어난 것만' 문장으로도 막히지 않았다"
         ),
     ),
     # 안전 필터 예정 — 사기꾼 출력이 안전 제약을 지키는지 검증 (미구현)
