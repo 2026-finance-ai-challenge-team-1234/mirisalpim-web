@@ -522,6 +522,9 @@ def _run_step(scenario, state, masked_text, link_clicked=False):
         try:
             box["outcome"] = step(Engine(scenario=scenario, state=state), masked_text)
         except Exception as exc:  # 모델 오류·설정 오류 등
+            # SSE 경로(_turn_events)와 같은 이유로 남긴다 - AI_ERROR 만 나가고
+            # 서버에 기록이 없으면 배포에서 원인을 추적할 수 없다.
+            logger.exception("사기범 턴 생성 실패 - scenario=%s", scenario.scenario_id)
             box["error"] = exc
         finally:
             connections.close_all()
@@ -1108,6 +1111,10 @@ async def _turn_events(
                 Engine(scenario=scenario, state=state), masked_text, on_delta=hand_off
             )
         except Exception as exc:  # 모델 오류·타임아웃 등
+            # 여기서 남기지 않으면 클라이언트는 AI_ERROR 만 받고 서버에는 아무 기록도
+            # 없다. 실측: gemini-3.7-flash 가 503 UNAVAILABLE 로 죽었을 때 배포 로그
+            # 만으로는 원인을 알 수 없어 로컬에서 API 를 직접 때려 확인해야 했다.
+            logger.exception("사기범 턴 생성 실패 - scenario=%s", scenario.scenario_id)
             box["error"] = exc
         finally:
             box["finished_at"] = time.monotonic()

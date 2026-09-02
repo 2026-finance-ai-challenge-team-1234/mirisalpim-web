@@ -98,17 +98,39 @@ class ChatResult:
 _PROVIDER_FN: dict[str, Callable[..., ChatResult]] = {}
 
 
+def is_transient_model_error(exc: BaseException) -> bool:
+    """일시적인 서버측 장애인가 (재시도할 가치가 있는가).
+
+    google-genai 의 APIError 는 code(int) 와 status(str) 를 들고 온다. 다른
+    프로바이더는 그 속성이 없으므로 문자열로도 한 번 더 본다.
+    ⚠️ 인증 실패(401/403)나 잘못된 요청(400)은 재시도해도 같은 결과라 제외한다.
+    """
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code in {429, 500, 502, 503, 504}
+    text = f"{type(exc).__name__} {exc}".upper()
+    return any(
+        k in text
+        for k in ("UNAVAILABLE", "RESOURCE_EXHAUSTED", "OVERLOADED", " 429", " 503")
+    )
+
+
 def chat(
     role: str,
     req: ChatRequest,
     on_delta: Callable[[str], None] | None = None,
+    model: str | None = None,
 ) -> ChatResult:
-    """역할만 넘기면 config.py 에서 모델·토큰·튜닝을 알아서 고른다"""
+    """역할만 넘기면 config.py 에서 모델·토큰·튜닝을 알아서 고른다.
+
+    `model` 을 명시하면 그 역할의 기본 모델 대신 쓴다 (일시 장애 폴백용).
+    ⚠️ 환경변수를 바꿔서 모델을 갈아끼우지 말 것 - 턴 처리는 워커 스레드에서 돌고
+    세션이 동시에 여러 개라 os.environ 변경은 다른 요청까지 오염시킨다.
+    """
     raise_for_config()
     cfg = AGENTS[role]
-    model = model_for(role)
     fn = _PROVIDER_FN[PROVIDER]
-    return fn(req, model, cfg.max_tokens, cfg.roleplay, on_delta)
+    return fn(req, model or model_for(role), cfg.max_tokens, cfg.roleplay, on_delta)
 
 
 def chat_json(role: str, req: ChatRequest) -> tuple[dict | None, ChatResult]:

@@ -163,6 +163,10 @@ class StreamingSafetyGate:
         if result.blocked:
             self.blocked = True
             self.violations = result.violations
+            # 사유만 남긴다 - 차단된 발화 원문은 로그에 넣지 않는다.
+            # 이게 없으면 훈련생이 대체 문구를 받은 이유를 배포 로그에서 알 수 없다
+            # (실측: Railway 45턴 중 2턴이 여기서 차단됐는데 어느 규칙인지 알 방법이 없었다).
+            logger.warning("안전필터 차단 - %s", result.violations)
             return
         self.approved.append(sentence)
         if self.downstream:

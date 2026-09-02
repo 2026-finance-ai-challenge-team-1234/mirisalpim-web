@@ -131,6 +131,35 @@ AGENTS: dict[str, AgentConfig] = {
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 # ─────────────────────────────────────────────────────────────────────────
+#  3-1. 사기범 일시 장애 폴백
+# ─────────────────────────────────────────────────────────────────────────
+
+#: 사기범 모델이 503/429 로 죽었을 때 한 번만 대신 쓸 모델. 빈 값이면 폴백하지 않는다.
+#:
+#: 2026-09-01 실측: gemini-3.7-flash 가 "This model is currently experiencing high
+#: demand" 로 503 을 냈고, 그동안 3.5-flash-lite 를 쓰는 판정기·안전 필터는 1초 내외로
+#: 멀쩡했다. 사기범은 훈련생과 직접 대화하는 유일한 역할이라 이게 죽으면 판정기가
+#: 살아 있어도 훈련이 진행되지 않는다 - 심사 중에 겪으면 서비스가 멈춘 것으로 보인다.
+#:
+#: ⚠️ 폴백 모델은 역할극 품질이 검증되지 않았다. "품질이 조금 떨어진 훈련" 이
+#: "멈춘 서비스" 보다 낫다는 판단이며, 안전 필터는 모델과 무관하게 그대로 적용된다.
+#: 폴백이 쓰이면 경고 로그가 남으므로 배포 로그에서 빈도를 확인할 수 있다.
+SCAMMER_FALLBACK_MODEL: dict[str, str] = {
+    "gemini": os.environ.get("GEMINI_SCAMMER_FALLBACK", "gemini-3.5-flash-lite"),
+    "anthropic": os.environ.get("ANTHROPIC_SCAMMER_FALLBACK", ""),
+    "ollama": os.environ.get("OLLAMA_SCAMMER_FALLBACK", ""),
+}
+
+
+def scammer_fallback_for(provider: str | None = None) -> str | None:
+    """폴백 모델 이름. 설정이 없거나 기본 모델과 같으면 None."""
+    p = provider or PROVIDER
+    fallback = (SCAMMER_FALLBACK_MODEL.get(p) or "").strip()
+    if not fallback or fallback == model_for("scammer", p):
+        return None
+    return fallback
+
+# ─────────────────────────────────────────────────────────────────────────
 #  4. 단가 (표시용) — $/MTok
 # ─────────────────────────────────────────────────────────────────────────
 
