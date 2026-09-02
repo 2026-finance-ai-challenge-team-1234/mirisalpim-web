@@ -69,9 +69,9 @@ export default function UserInfo() {
 
             <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3.5 mb-5">
               <p className="text-xs text-[#0052CC] leading-relaxed font-semibold break-keep">
-                AI 피싱범과의 대화 몰입도를 높이기 위해 사용자 이름은 실명 입력을 권장합니다.<br />
+                입력하신 정보는 저장되지 않고 대화 중에만 쓰입니다. 그래도 <b>실명 대신 닉네임이나 가상의 이름</b>을 권장합니다.<br />
                 <span className="text-[11px] font-normal text-gray-500">
-                  (나이, 주소 등 기타 정보는 자유롭게 입력하셔도 됩니다.)
+                  (나이, 주소는 선택이며 주소는 시·구까지만 사용됩니다.)
                 </span>
               </p>
             </div>
@@ -86,7 +86,7 @@ export default function UserInfo() {
                 type="text"
                 value={userName}
                 onChange={(e) => setUserName(e.target.value)}
-                placeholder="실제와 같은 체감을 위해 실명을 입력해주세요."
+                placeholder="닉네임 또는 가상의 이름 (예: 김미리)"
                 className="w-full p-3.5 rounded-xl border border-gray-200 bg-[#F8F9FA] text-xs font-medium text-[#191F28] placeholder-gray-400 focus:bg-white focus:border-[#0052CC] focus:outline-none transition"
               />
             </div>
