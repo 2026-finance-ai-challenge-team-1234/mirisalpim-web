@@ -18,7 +18,7 @@
 - 통화·문자 채널에 맞춰 반응하는 스미싱 훈련
 - 사기 111개와 정상 비교 사례 7개를 섞은 중립 판별 훈련
 - 개인정보 제공·링크 클릭·앱 설치·송금 동의·고립 수용 감지와 즉시 경고
-- 판단 시점, 놓친 단서, 위험 행동, 취약 패턴, 행동 가이드를 제공하는 진단 리포트
+- 판단한 대화 횟수, 놓친 단서, 위험 행동, 취약 패턴, 행동 가이드를 제공하는 진단 리포트
 - 가상의 로그인·결제·OTP 탈취 과정을 체험하는 4단계 피싱 체험관
 - 고정 음성을 이용한 STT·판정·생성·안전 검사·TTS 구간별 레이턴시 측정
 
@@ -51,6 +51,12 @@ flowchart LR
 | 진단      | `gemini-3.5-flash-lite` | 코드가 확정한 채점 결과를 사용자 친화적으로 설명       |
 
 사기범 모델에서 429·503 등 일시 장애가 발생하면, 아직 승인된 문장이 전송되지 않은 경우에만 `gemini-3.5-flash-lite`로 한 번 재시도합니다. 이미 문장이 전송된 뒤에는 같은 발화가 중복되지 않도록 폴백하지 않습니다.
+
+### 채점과 리포트 기준
+
+내부 상태의 원시 턴 번호는 한 번의 사용자–AI 교환마다 2씩 증가합니다. 따라서 판별 지연과 사용자 화면의 “N번째 대화”는 원시 턴 차이가 아니라 **주고받은 대화 횟수**로 계산합니다. 사기 시나리오는 최초 판별 가능 시점 이후 0~1회 내에 위험 행동 없이 판단하면 S, 2~3회는 A, 4~6회 또는 경미한 위험 행동이 있으면 B, 중대 위험 행동 또는 그보다 늦은 판단은 C, 오판은 D입니다. 정상 시나리오를 사기로 판단하면 오탐으로 안내합니다.
+
+판단 API는 화면용 `judgedExchange`·`firstDetectableExchange`와 놓친 단서의 `exchange`를 반환합니다. `judgedTurn`·`firstDetectableTurn`과 타임라인의 `turn`은 내부 마커 정렬을 위한 원시 턴 번호로 유지합니다.
 
 ## 시나리오 데이터
 
@@ -203,6 +209,8 @@ GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-credentials.json
 
 음성 SSE는 `accepted`, `status`, `riskWarning`, `delta`, `audio`, `timing`, `done` 이벤트를 사용합니다. 정상 완료 시 `done`이 마지막 이벤트입니다. `timing`은 서버 설정과 요청 옵션을 모두 켠 진단 요청에서만 반환합니다.
 
+판단 응답의 사용자 표시에는 `judgedExchange`와 `firstDetectableExchange`를 사용합니다. 이전 클라이언트 호환과 타임라인 정렬을 위해 원시 `judgedTurn`·`firstDetectableTurn`도 함께 반환합니다.
+
 ## 검증
 
 ### 결정론적 검증
@@ -228,7 +236,7 @@ npm run build
 - 시나리오 검증: 118/118
 - 판정기 평가: 20턴 중 19턴 정확, 95%
 - 안전 필터 평가: 27/27
-- Django 테스트: 173건 통과, 1건 skip
+- Django 테스트: 176건 통과, 1건 skip
 - AI 코어 smoke, 프론트 lint와 production build 통과
 
 Gemini가 필요한 평가 도구는 저장소 루트에서 실행합니다.
@@ -298,11 +306,3 @@ python manage.py benchmark_voice_latency \
 - 음성 사용 시 GCP 서비스 계정 설정
 - `/health/` 응답과 시나리오 118개 seed 로그
 
-## 프로젝트 팀원
-
-
-|            |**김하람** | **권민찬** | **엄민송** | **오하연** |
-|:---------:|:---------: | :----------: | :----------: | :----------: |
-| **Profile** | <img src="https://avatars.githubusercontent.com/u/37824335?v=4" width="100" height="100"> | <img src="https://avatars.githubusercontent.com/u/235444774?v=4" width="100" height="100"> | <img src="https://avatars.githubusercontent.com/u/235094857?v=4" width="100" height="100"> | <img src="https://avatars.githubusercontent.com/u/202039164?v=4" width="100" height="100"> |
-| **Role** | Project Manager<br>AI Core Developer | Backend Developer<br>Deployment | Frontend Developer<br>UI/UX | AI QA Engineer<br>Scenario Design |
-| **GitHub**  | [@1unaram ](https://github.com/1unaram)| [@tronve ](https://github.com/tronve)  | [@skymin1121 ](https://github.com/skymin1121) |  [@oohayeon ](https://github.com/oohayeon) |
