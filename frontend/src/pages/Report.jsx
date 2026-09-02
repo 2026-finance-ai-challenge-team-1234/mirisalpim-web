@@ -218,7 +218,9 @@ export default function Report() {
               <div className="bg-white/80 rounded-xl p-3 border border-blue-100 space-y-1">
                 {report.judgedTurn != null ? (
                   <p className="text-[11px] text-[#191F28] font-medium break-keep">
-                    <b className="text-[#0052CC]">{report.judgedTurn}번째</b> 대화에서 알아차렸어요.
+                    {/* 턴 번호가 아니라 대화 횟수를 쓴다. 한 번의 교환마다 턴이 2씩
+                        올라서 turn 3 은 세 번째가 아니라 두 번째 대화다. */}
+                    <b className="text-[#0052CC]">{report.judgedExchange ?? report.judgedTurn}번째</b> 대화에서 알아차렸어요.
                   </p>
                 ) : (
                   // judgedTurn이 null이면 판단 없이 최대 턴까지 대화가 이어진 경우
@@ -228,7 +230,7 @@ export default function Report() {
                 )}
                 {report.firstDetectableTurn != null && (
                   <p className="text-[11px] text-gray-600 break-keep">
-                    가장 빠른 판별 가능 시점은 <b>{report.firstDetectableTurn}번째</b> 대화였어요.
+                    가장 빠른 판별 가능 시점은 <b>{report.firstDetectableExchange ?? report.firstDetectableTurn}번째</b> 대화였어요.
                   </p>
                 )}
               </div>
@@ -368,8 +370,8 @@ export default function Report() {
                       <p className="text-xs font-bold text-[#191F28] break-keep">
                         🔴 {tp.trigger}
                       </p>
-                      {tp.turn != null && (
-                        <span className="text-[10px] font-bold text-gray-400 shrink-0">{tp.turn}번째</span>
+                      {(tp.exchange ?? tp.turn) != null && (
+                        <span className="text-[10px] font-bold text-gray-400 shrink-0">{tp.exchange ?? tp.turn}번째</span>
                       )}
                     </div>
                     <p className="text-[11px] text-gray-600 leading-relaxed break-keep">{tp.why}</p>

@@ -30,7 +30,12 @@ from django.utils import timezone
 
 from .diagnosis import _official_links
 from .engine_state import load_state, save_state
-from .grading import ACTION_API_NAMES, first_detectable_turn, grade
+from .grading import (
+    ACTION_API_NAMES,
+    exchange_index,
+    first_detectable_turn,
+    grade,
+)
 from .models import RiskyAction, Scenario, Session, Stage, TellPoint
 from .retention import (
     CLEANUP_CACHE_KEY,
@@ -939,9 +944,32 @@ class GradingTests(TestCase):
         self.assertEqual(result.delta, 0)
 
     def test_early_detection_is_A(self):
-        scenario, state = self.make("sc-02", judged_turn=4, is_scam_guess=True)
+        """판별 가능 시점 이후 2~3번 더 주고받고 알아챈 경우."""
+        scenario, state = self.make("sc-02", judged_turn=5, is_scam_guess=True)
 
-        self.assertEqual(grade(scenario, state).grade, "A")
+        result = grade(scenario, state)
+        self.assertEqual(result.grade, "A")
+        self.assertEqual(result.delta, 2)  # 턴 차이 4 가 아니라 대화 2회
+
+    def test_one_exchange_after_detectable_is_still_S(self):
+        """⚠️ delta 는 턴이 아니라 대화 횟수다.
+
+        턴 차이를 그대로 쓰면 한 번의 교환마다 2씩 올라 delta 가 늘 짝수가 되고,
+        S(<=1) 임계값에 아무도 걸리지 않아 **한 마디라도 하면 S 가 불가능**했다.
+        훈련의 목적이 대화인데 대화를 시작하면 만점이 사라지는 상태였다.
+        """
+        scenario, state = self.make("sc-02", judged_turn=3, is_scam_guess=True)
+
+        result = grade(scenario, state)
+        self.assertEqual(result.delta, 1)
+        self.assertEqual(result.grade, "S")
+
+    def test_exchange_index_counts_conversations_not_turns(self):
+        """화면 문구용 변환. turn 3 은 세 번째가 아니라 두 번째 대화다."""
+        self.assertEqual(
+            [exchange_index(t) for t in (1, 3, 5, 7, 9)], [1, 2, 3, 4, 5]
+        )
+        self.assertIsNone(exchange_index(None))
 
     def test_minor_risky_action_drops_to_B(self):
         scenario, state = self.make(
@@ -987,14 +1015,24 @@ class GradingTests(TestCase):
         self.assertEqual(first_detectable_turn(load_scenario("nm-01")), 1)
 
     def test_missed_tell_points_stop_at_the_judgment_turn(self):
-        scenario, state = self.make("sc-02", judged_turn=3, is_scam_guess=True)
+        scenario, state = self.make("sc-02", judged_turn=5, is_scam_guess=True)
 
         missed = grade(scenario, state).missed_tell_points
 
         turns = {tp.id: tp.first_detectable_turn for tp in scenario.tell_points}
-        self.assertTrue(all(turns[tp] < 3 for tp in missed))
+        self.assertTrue(all(turns[tp] < 5 for tp in missed))
         self.assertIn("tp1", missed)
         self.assertNotIn("tp5", missed)
+
+    def test_one_exchange_after_detectable_missed_nothing(self):
+        """대화 한 번 만에 알아챈 훈련생에게 '신호를 지나쳤다' 고 하면 안 된다.
+
+        모든 시나리오가 turn 1 에 신호를 하나씩 두고 있어서, 이 게이트가 턴 기준일
+        때는 0교환을 뺀 **모든 훈련생**이 tp1 을 놓쳤다는 리포트를 받았다.
+        """
+        scenario, state = self.make("sc-02", judged_turn=3, is_scam_guess=True)
+
+        self.assertEqual(grade(scenario, state).missed_tell_points, [])
 
     def test_immediate_detection_missed_nothing(self):
         """S 등급인데 리포트가 '신호를 지나쳤다'고 말하면 안 된다."""
@@ -1059,7 +1097,8 @@ class SubmitJudgmentTests(TestCase):
 
         self.assertEqual(
             set(payload),
-            {"grade", "isCorrect", "judgedTurn", "firstDetectableTurn", "summary",
+            {"grade", "isCorrect", "judgedTurn", "firstDetectableTurn",
+             "judgedExchange", "firstDetectableExchange", "summary",
              "vulnerabilityPattern", "strength", "weakness", "missedTellPoints",
              "riskyActions", "guidance", "timeline", "source", "sourceRefs"},
         )
@@ -1080,7 +1119,9 @@ class SubmitJudgmentTests(TestCase):
         missed = self.judge(session_id).json()["missedTellPoints"]
 
         self.assertTrue(missed)
-        self.assertEqual(set(missed[0]), {"id", "turn", "trigger", "why", "weight"})
+        self.assertEqual(
+            set(missed[0]), {"id", "turn", "exchange", "trigger", "why", "weight"}
+        )
 
     def test_ends_the_session(self):
         session_id = self.start_training()
