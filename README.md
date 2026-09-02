@@ -306,11 +306,3 @@ python manage.py benchmark_voice_latency \
 - 음성 사용 시 GCP 서비스 계정 설정
 - `/health/` 응답과 시나리오 118개 seed 로그
 
-## 프로젝트 팀원
-
-
-|            |**김하람** | **권민찬** | **엄민송** | **오하연** |
-|:---------:|:---------: | :----------: | :----------: | :----------: |
-| **Profile** | <img src="https://avatars.githubusercontent.com/u/37824335?v=4" width="100" height="100"> | <img src="https://avatars.githubusercontent.com/u/235444774?v=4" width="100" height="100"> | <img src="https://avatars.githubusercontent.com/u/235094857?v=4" width="100" height="100"> | <img src="https://avatars.githubusercontent.com/u/202039164?v=4" width="100" height="100"> |
-| **Role** | Project Manager<br>AI Core Developer | Backend Developer<br>Deployment | Frontend Developer<br>UI/UX | AI QA Engineer<br>Scenario Design |
-| **GitHub**  | [@1unaram ](https://github.com/1unaram)| [@tronve ](https://github.com/tronve)  | [@skymin1121 ](https://github.com/skymin1121) |  [@oohayeon ](https://github.com/oohayeon) |
