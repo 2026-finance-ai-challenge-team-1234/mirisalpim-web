@@ -22,7 +22,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 import ai_core.agents.scammer as scammer_module  # noqa: E402
-from ai_core.config import scammer_fallback_for  # noqa: E402
+from ai_core.config import model_for, scammer_fallback_for  # noqa: E402
 
 # ⚠️ llm 은 import 만으로 API 키를 요구하지 않는다 (설정 검사는 raise_for_config()
 # 안에 있고 chat() 이 부른다). 아래 폴백 검증은 chat() 을 가짜로 갈아끼우므로
@@ -148,8 +148,15 @@ check("403 은 재시도 대상이 아니다", not is_transient_model_error(_Fak
 check("일반 예외는 재시도 대상이 아니다", not is_transient_model_error(ValueError("boom")))
 
 
-def _run_scammer(side_effect, on_delta=None):
-    """chat() 을 가로채고 (호출된 모델 목록, 예외이름) 을 돌려준다."""
+#: 폴백 재시도 "로직" 검증용 가짜 모델명.
+#: ⚠️ 실제 설정(scammer_fallback_for())을 쓰면 안 된다 - CI 에는 .env 도
+#: LLM_PROVIDER 도 없어 PROVIDER 가 기본값 ollama 가 되고, ollama 는 폴백이 비어 있어
+#: 재시도가 일어나지 않는다. 로컬(.env 에 gemini)에서만 통과하는 테스트가 된다.
+_FALLBACK = "test-fallback-model"
+
+
+def _run_scammer(side_effect, on_delta=None, fallback=_FALLBACK):
+    """chat() 과 폴백 설정을 가로채고 (호출된 모델 목록, 예외이름) 을 돌려준다."""
     used: list[str | None] = []
 
     def fake_chat(role, req, delta=None, model=None):
@@ -159,19 +166,34 @@ def _run_scammer(side_effect, on_delta=None):
             raise result
         return result
 
-    original = scammer_module.chat
+    original_chat = scammer_module.chat
+    original_fallback = scammer_module.scammer_fallback_for
     scammer_module.chat = fake_chat
+    scammer_module.scammer_fallback_for = lambda: fallback
     try:
         scammer_module.generate_scammer_turn(scenario, create_session(scenario), on_delta)
         return used, None
     except BaseException as exc:  # noqa: BLE001 - 종류만 확인한다
         return used, type(exc).__name__
     finally:
-        scammer_module.chat = original
+        scammer_module.chat = original_chat
+        scammer_module.scammer_fallback_for = original_fallback
 
 
 _OK = ChatResult(text="네, 확인되었습니다.", model="m", latency_ms=10, first_token_ms=5)
-_FALLBACK = scammer_fallback_for("gemini")
+
+# 설정 해석은 프로바이더를 명시해 확인한다 (주변 환경에 좌우되지 않게).
+_gemini_fallback = scammer_fallback_for("gemini")
+check(
+    "gemini 폴백이 설정돼 있고 기본 사기범 모델과 다르다",
+    bool(_gemini_fallback) and _gemini_fallback != model_for("scammer", "gemini"),
+    f"{model_for('scammer', 'gemini')} → {_gemini_fallback}",
+)
+check(
+    "ollama 는 폴백을 두지 않는다",
+    scammer_fallback_for("ollama") is None,
+    str(scammer_fallback_for("ollama")),
+)
 
 used, err = _run_scammer(lambda n, d: _FakeApiError(503) if n == 1 else _OK)
 check(
@@ -207,6 +229,13 @@ used, err = _run_scammer(lambda n, d: _FakeApiError(503))
 check(
     "폴백도 실패하면 예외가 올라온다",
     used == [None, _FALLBACK] and err == "_FakeApiError",
+    f"{used} {err}",
+)
+
+used, err = _run_scammer(lambda n, d: _FakeApiError(503), fallback=None)
+check(
+    "폴백 설정이 없으면(ollama 등) 재시도하지 않는다",
+    used == [None] and err == "_FakeApiError",
     f"{used} {err}",
 )
 
