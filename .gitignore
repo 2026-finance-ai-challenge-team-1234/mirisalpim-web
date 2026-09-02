@@ -22,6 +22,10 @@ gcp-credentials.json
 # 음성 POC 세션 로그 + 녹음 원본 (poc/voice_chat.py) — 실행마다 생성됨.
 poc/results/
 
+# Railway 배포 로그 덤프. 대화 원문은 없지만 세션 UUID 와 접근 로그가 들어 있고
+# 진단이 끝나면 남길 이유가 없다 (기획서 10절: 세션은 종료 시 파기).
+logs.*.json
+
 # 고정 음성 레이턴시 벤치마크 출력. 입력 음성은 명령에 로컬 경로로만 넘기며
 # 저장소 안에 복사하지 않는다.
 backend/benchmark-results/
