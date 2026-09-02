@@ -7,14 +7,18 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Callable
 
+from ..config import scammer_fallback_for
 from ..cost import Usage
-from ..llm import ChatRequest, chat
+from ..llm import ChatRequest, chat, is_transient_model_error
 from ..prompts import SCAMMER_CORE, scenario_block, turn_state_block
 from ..state import current_stage
 from ..types import Scenario, SessionState
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,16 +49,37 @@ def generate_scammer_turn(
             }
         )
 
-    res = chat(
-        "scammer",
-        ChatRequest(
-            system=SCAMMER_CORE,
-            cached_system=scenario_block(scenario),
-            messages=messages,
-            turn_state=turn_state_block(stage, state),
-        ),
-        on_delta,
+    req = ChatRequest(
+        system=SCAMMER_CORE,
+        cached_system=scenario_block(scenario),
+        messages=messages,
+        turn_state=turn_state_block(stage, state),
     )
+
+    # 이미 내보낸 문장이 있으면 재시도하지 않는다. on_delta 는 StreamingSafetyGate 로
+    # 이어지고 승인된 문장은 자막·TTS 로 이미 나갔으므로, 다시 생성하면 훈련생에게
+    # 같은 말이 두 번 들린다. 스트림 도중 끊긴 경우가 여기 해당한다.
+    emitted = False
+
+    def track(piece: str) -> None:
+        nonlocal emitted
+        emitted = True
+        if on_delta:
+            on_delta(piece)
+
+    try:
+        res = chat("scammer", req, track)
+    except Exception as exc:
+        fallback = scammer_fallback_for()
+        if emitted or fallback is None or not is_transient_model_error(exc):
+            raise
+        logger.warning(
+            "사기범 모델 일시 장애 - %s 로 한 번 재시도합니다 (%s: %s)",
+            fallback,
+            type(exc).__name__,
+            exc,
+        )
+        res = chat("scammer", req, track, model=fallback)
 
     return ScammerResult(
         text=res.text,

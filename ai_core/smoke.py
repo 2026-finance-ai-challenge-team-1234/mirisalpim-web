@@ -21,6 +21,13 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, OSError):
         pass
 
+import ai_core.agents.scammer as scammer_module  # noqa: E402
+from ai_core.config import model_for, scammer_fallback_for  # noqa: E402
+
+# ⚠️ llm 은 import 만으로 API 키를 요구하지 않는다 (설정 검사는 raise_for_config()
+# 안에 있고 chat() 이 부른다). 아래 폴백 검증은 chat() 을 가짜로 갈아끼우므로
+# 이 파일은 여전히 키 없이 돌아간다.
+from ai_core.llm import ChatResult, is_transient_model_error  # noqa: E402
 from ai_core.state import create_session, current_stage, try_advance_stage  # noqa: E402
 from ai_core.streaming import split_sentences, strip_mask_chars  # noqa: E402
 from ai_core.types import Scenario  # noqa: E402
@@ -122,6 +129,115 @@ check(
 )
 clean = "한양지방검찰청 강윤재 수사관입니다."
 check("마스킹 문자가 없으면 원문 그대로", strip_mask_chars(clean) is clean, clean)
+
+print("\n사기범 일시 장애 폴백 (LLM 호출 없이 chat() 을 가짜로 대체)")
+
+
+class _FakeApiError(Exception):
+    """google-genai APIError 처럼 code 를 들고 오는 예외."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(f"{code} 오류")
+        self.code = code
+
+
+check("503 은 일시 장애로 본다", is_transient_model_error(_FakeApiError(503)))
+check("429 은 일시 장애로 본다", is_transient_model_error(_FakeApiError(429)))
+check("400 은 재시도 대상이 아니다", not is_transient_model_error(_FakeApiError(400)))
+check("403 은 재시도 대상이 아니다", not is_transient_model_error(_FakeApiError(403)))
+check("일반 예외는 재시도 대상이 아니다", not is_transient_model_error(ValueError("boom")))
+
+
+#: 폴백 재시도 "로직" 검증용 가짜 모델명.
+#: ⚠️ 실제 설정(scammer_fallback_for())을 쓰면 안 된다 - CI 에는 .env 도
+#: LLM_PROVIDER 도 없어 PROVIDER 가 기본값 ollama 가 되고, ollama 는 폴백이 비어 있어
+#: 재시도가 일어나지 않는다. 로컬(.env 에 gemini)에서만 통과하는 테스트가 된다.
+_FALLBACK = "test-fallback-model"
+
+
+def _run_scammer(side_effect, on_delta=None, fallback=_FALLBACK):
+    """chat() 과 폴백 설정을 가로채고 (호출된 모델 목록, 예외이름) 을 돌려준다."""
+    used: list[str | None] = []
+
+    def fake_chat(role, req, delta=None, model=None):
+        used.append(model)
+        result = side_effect(len(used), delta)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    original_chat = scammer_module.chat
+    original_fallback = scammer_module.scammer_fallback_for
+    scammer_module.chat = fake_chat
+    scammer_module.scammer_fallback_for = lambda: fallback
+    try:
+        scammer_module.generate_scammer_turn(scenario, create_session(scenario), on_delta)
+        return used, None
+    except BaseException as exc:  # noqa: BLE001 - 종류만 확인한다
+        return used, type(exc).__name__
+    finally:
+        scammer_module.chat = original_chat
+        scammer_module.scammer_fallback_for = original_fallback
+
+
+_OK = ChatResult(text="네, 확인되었습니다.", model="m", latency_ms=10, first_token_ms=5)
+
+# 설정 해석은 프로바이더를 명시해 확인한다 (주변 환경에 좌우되지 않게).
+_gemini_fallback = scammer_fallback_for("gemini")
+check(
+    "gemini 폴백이 설정돼 있고 기본 사기범 모델과 다르다",
+    bool(_gemini_fallback) and _gemini_fallback != model_for("scammer", "gemini"),
+    f"{model_for('scammer', 'gemini')} → {_gemini_fallback}",
+)
+check(
+    "ollama 는 폴백을 두지 않는다",
+    scammer_fallback_for("ollama") is None,
+    str(scammer_fallback_for("ollama")),
+)
+
+used, err = _run_scammer(lambda n, d: _FakeApiError(503) if n == 1 else _OK)
+check(
+    "일시 장애 + 아직 방출 전이면 폴백 모델로 한 번 재시도",
+    used == [None, _FALLBACK] and err is None,
+    f"{used} {err}",
+)
+
+
+def _emit_then_fail(n, delta):
+    if n == 1:
+        if delta:
+            delta("첫 문장입니다.")  # 안전 게이트를 통해 이미 나간 상태
+        return _FakeApiError(503)
+    return _OK
+
+
+used, err = _run_scammer(_emit_then_fail, on_delta=lambda s: None)
+check(
+    "이미 문장을 내보냈으면 재시도하지 않는다 (같은 말이 두 번 들리면 안 된다)",
+    used == [None] and err == "_FakeApiError",
+    f"{used} {err}",
+)
+
+used, err = _run_scammer(lambda n, d: _FakeApiError(400))
+check(
+    "비일시 오류는 폴백 없이 그대로 올린다",
+    used == [None] and err == "_FakeApiError",
+    f"{used} {err}",
+)
+
+used, err = _run_scammer(lambda n, d: _FakeApiError(503))
+check(
+    "폴백도 실패하면 예외가 올라온다",
+    used == [None, _FALLBACK] and err == "_FakeApiError",
+    f"{used} {err}",
+)
+
+used, err = _run_scammer(lambda n, d: _FakeApiError(503), fallback=None)
+check(
+    "폴백 설정이 없으면(ollama 등) 재시도하지 않는다",
+    used == [None] and err == "_FakeApiError",
+    f"{used} {err}",
+)
 
 if failed == 0:
     print("\n스모크 테스트 통과 — 결정론적 코어는 정상입니다.\n")
