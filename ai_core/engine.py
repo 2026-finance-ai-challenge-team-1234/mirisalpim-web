@@ -165,7 +165,7 @@ def step(
     safety_latency_ms: list[int] = []
 
     if use_safety:
-        gate = StreamingSafetyGate(downstream=on_delta)
+        gate = StreamingSafetyGate(downstream=on_delta, category=scenario.category)
         try:
             result = generate_scammer_turn(scenario, state, gate.feed)
         except BaseException:

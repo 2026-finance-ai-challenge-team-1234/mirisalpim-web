@@ -22,13 +22,17 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 import ai_core.agents.scammer as scammer_module  # noqa: E402
+from ai_core.agents.safety import SafetyResult  # noqa: E402
 from ai_core.config import model_for, scammer_fallback_for  # noqa: E402
+from ai_core.prompts import SCAMMER_CORE, scenario_block  # noqa: E402
 
 # ⚠️ llm 은 import 만으로 API 키를 요구하지 않는다 (설정 검사는 raise_for_config()
 # 안에 있고 chat() 이 부른다). 아래 폴백 검증은 chat() 을 가짜로 갈아끼우므로
 # 이 파일은 여전히 키 없이 돌아간다.
 from ai_core.llm import ChatResult, is_transient_model_error  # noqa: E402
 from ai_core.state import create_session, current_stage, try_advance_stage  # noqa: E402
+import ai_core.streaming as streaming_module  # noqa: E402
+from ai_core.prompts import CHANNEL_DIRECTIVE, safety_fallback_text  # noqa: E402
 from ai_core.streaming import split_sentences, strip_mask_chars  # noqa: E402
 from ai_core.types import Scenario  # noqa: E402
 
@@ -129,6 +133,68 @@ check(
 )
 clean = "한양지방검찰청 강윤재 수사관입니다."
 check("마스킹 문자가 없으면 원문 그대로", strip_mask_chars(clean) is clean, clean)
+
+print("\n채널 인지 — 문자 대화에 통화 표현이 새지 않아야 한다")
+
+check("voice 채널 지시문 존재", "통화" in CHANNEL_DIRECTIVE["voice"])
+check(
+    "smishing 채널 지시문이 통화 표현을 금지한다",
+    "통화" in CHANNEL_DIRECTIVE["smishing"] and "금지" in CHANNEL_DIRECTIVE["smishing"],
+)
+check(
+    "smishing 대체 문구에 '통화' 가 없다",
+    "통화" not in safety_fallback_text("smishing"),
+    safety_fallback_text("smishing"),
+)
+check("voice 대체 문구는 그대로", "통화" in safety_fallback_text("voice"), safety_fallback_text("voice"))
+check(
+    "카테고리를 모르면 음성 문구로 떨어진다",
+    safety_fallback_text(None) == safety_fallback_text("voice"),
+)
+check(
+    "SCAMMER_CORE 가 카드번호 생성을 금지한다",
+    "카드번호는 어떤 형태로도 만들지 않습니다" in SCAMMER_CORE,
+)
+check("scenario_block 이 전달 수단을 싣는다", "전달 수단:" in scenario_block(scenario))
+
+
+def _fallback_for(category, blocked_at=1):
+    """게이트가 차단했을 때 채널에 맞는 문구가 나오는지 (LLM 호출 없음)."""
+    counter = {"n": 0}
+
+    def fake_check(sentence):
+        counter["n"] += 1
+        hit = counter["n"] == blocked_at
+        return SafetyResult(
+            blocked=hit,
+            violations=["real_account"] if hit else [],
+            reasoning="mock",
+            model="m",
+            latency_ms=1,
+        )
+
+    original = streaming_module.check_safety
+    streaming_module.check_safety = fake_check
+    try:
+        gate = streaming_module.StreamingSafetyGate(category=category)
+        gate.feed("첫 문장입니다. 둘째 문장입니다.")
+        gate.finish()
+        return gate.approved, gate.display_text
+    finally:
+        streaming_module.check_safety = original
+
+
+_approved, _text = _fallback_for("smishing")
+check("문자 시나리오 차단 시 통화 표현이 나가지 않는다", "통화" not in _text, _text)
+_approved, _text = _fallback_for("voice")
+check("음성 시나리오는 기존 문구 유지", "통화" in _text, _text)
+_approved, _text = _fallback_for("smishing", blocked_at=2)
+check(
+    "이미 승인된 문장은 차단 뒤에도 유지된다",
+    _approved == ["첫 문장입니다."] and _text.startswith("첫 문장입니다."),
+    _text,
+)
+
 
 print("\n사기범 일시 장애 폴백 (LLM 호출 없이 chat() 을 가짜로 대체)")
 

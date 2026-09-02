@@ -30,7 +30,7 @@ from typing import Callable
 
 from .agents.safety import check_safety
 from .cost import Usage
-from .prompts import SAFETY_FALLBACK_TEXT
+from .prompts import safety_fallback_text
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,9 @@ class StreamingSafetyGate:
 
     #: 승인된 문장이 나올 때마다 호출할 실제 콜백(TTS 등). None 이면 그냥 버린다.
     downstream: Callable[[str], None] | None = None
+    #: 시나리오 카테고리("voice"/"smishing"). 차단 시 대체 문구를 채널에 맞게 고른다 -
+    #: 문자 대화에 "통화 상태가 좋지 않네요" 를 내보내면 대체 문구가 역할을 깬다.
+    category: str | None = None
 
     _buf: str = ""
     approved: list[str] = field(default_factory=list)
@@ -176,5 +179,6 @@ class StreamingSafetyGate:
     def display_text(self) -> str:
         """transcript 에 기록할 최종 텍스트."""
         if self.blocked:
-            return " ".join([*self.approved, SAFETY_FALLBACK_TEXT]).strip()
+            fallback = safety_fallback_text(self.category)
+            return " ".join([*self.approved, fallback]).strip()
         return " ".join(self.approved).strip()
