@@ -50,6 +50,30 @@ def first_detectable_turn(scenario):
     return min(turns) if turns else None
 
 
+def exchange_index(turn):
+    """턴 번호 → 훈련생이 세는 "N번째 대화".
+
+    state.turn 은 상대 발화(1) 다음에 훈련생 1턴 + 상대 1턴씩 늘어서 상대의 메시지는
+    항상 홀수 턴이다(1, 3, 5...). 화면에는 이 값을 그대로 "N번째 대화"라고 쓰면 안 된다 -
+    turn 3 은 세 번째가 아니라 두 번째 대화다.
+    """
+    return None if turn is None else (turn + 1) // 2
+
+
+def exchanges_since_detectable(judged_turn, t_first):
+    """판별 가능 시점 이후 몇 번을 더 주고받고 판단했는가.
+
+    ⚠️ 턴 차이를 그대로 쓰면 안 된다. 한 번의 교환마다 턴이 2씩 오르고 t_first 는
+    거의 항상 1이라 차이가 늘 짝수가 된다. 그러면 S(<=1)·A(<=3) 의 홀수 임계값에
+    아무도 걸리지 않아 **한 마디라도 하면 S 가 불가능**했고, 반대로
+    _missed_tell_points 의 delta<=1 게이트도 0교환이 아니면 항상 열려서 거의 모든
+    훈련생이 "1번째 대화 신호를 지나쳤다" 는 리포트를 받았다.
+    """
+    if judged_turn is None or t_first is None:
+        return None
+    return (judged_turn - t_first) // 2
+
+
 def grade(scenario, state):
     """시나리오 카드와 세션 상태로 등급을 낸다.
 
@@ -64,7 +88,8 @@ def grade(scenario, state):
     has_minor = any(action in MINOR_ACTIONS for action in risky_actions)
 
     t_first = first_detectable_turn(scenario)
-    delta = (judged_turn - t_first) if (judged_turn is not None and t_first is not None) else None
+    #: 턴 수가 아니라 **주고받은 횟수**다 (exchanges_since_detectable 주석 참고).
+    delta = exchanges_since_detectable(judged_turn, t_first)
 
     if not scenario.is_scam:
         return _grade_normal(
@@ -79,6 +104,7 @@ def grade(scenario, state):
         grade_letter = "D"
     elif has_critical:
         grade_letter = "C"
+    # 아래 임계값의 단위는 "대화 횟수" 다. S=바로 알아챔, A=몇 번 안에, B=늦게.
     elif delta is not None and delta <= 1 and not risky_actions:
         grade_letter = "S"
     elif delta is not None and delta <= 3 and not risky_actions:
@@ -139,7 +165,7 @@ def _missed_tell_points(scenario, judged_turn, delta):
     hit_tell_points 는 "훈련생이 알아챘다" 가 아니라 "턴 번호상 노출됐다" 는
     뜻이다 - 판단 시점으로 근사한다. 두 가지를 반영한다.
 
-    · 최초 판별 가능 시점 직후(delta<=1)에 알아챘으면 지나친 단서는 없다.
+    · 최초 판별 가능 시점 직후(대화 1회 이내)에 알아챘으면 지나친 단서는 없다.
     · 판단한 바로 그 턴에 처음 드러난 단서는 지나친 것이 아니다 (< 로 자른다).
 
     판정기에 "훈련생이 이 단서를 언급했는가" 가 추가되면 이 근사를 걷어낸다.

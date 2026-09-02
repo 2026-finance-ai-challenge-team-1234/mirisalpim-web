@@ -10,7 +10,7 @@
    출력으로 덮어쓰면 된다. grade·missed_tell_points·guidance 는 덮어쓰지 않는다.
 """
 
-from .grading import ACTION_API_NAMES, FALSE_ALARM
+from .grading import ACTION_API_NAMES, FALSE_ALARM, exchange_index
 
 #: 놓친 단서 설명은 시나리오 카드의 why 를 그대로 쓴다 (리포트 문서 §5-④:
 #: "이 부분은 LLM 생성이 필요하지 않다").
@@ -32,6 +32,8 @@ def build_report(scenario, state, result, source_refs=()):
         {
             "id": tp_id,
             "turn": tell_points[tp_id].first_detectable_turn,
+            # turn 은 타임라인용 원시 턴 번호, exchange 는 화면에 쓸 "N번째 대화".
+            "exchange": exchange_index(tell_points[tp_id].first_detectable_turn),
             "trigger": tell_points[tp_id].trigger,
             "why": tell_points[tp_id].why,
             "weight": tell_points[tp_id].weight,
@@ -45,6 +47,10 @@ def build_report(scenario, state, result, source_refs=()):
         "isCorrect": result.is_correct,
         "judgedTurn": result.judged_turn,
         "firstDetectableTurn": result.first_detectable_turn,
+        # 화면 문구용. 턴 번호를 그대로 "N번째 대화" 라고 쓰면 어긋난다 -
+        # 한 번의 교환마다 턴이 2씩 오르므로 turn 3 은 두 번째 대화다.
+        "judgedExchange": exchange_index(result.judged_turn),
+        "firstDetectableExchange": exchange_index(result.first_detectable_turn),
         "summary": _summary(scenario, result),
         # 규칙 기반으로는 채우지 않는다. 진단 LLM 이 붙으면 그때 값이 들어간다
         # (취약 패턴을 규칙으로 판정하면 근거 없는 단정이 된다).
@@ -74,9 +80,12 @@ def _summary(scenario, result):
     if not result.is_correct:
         return "끝까지 사기임을 알아차리지 못했습니다. 실제였다면 피해로 이어졌을 상황입니다."
 
-    line = f"{result.judged_turn}번째 턴에서 사기임을 알아차리셨습니다."
+    line = f"{exchange_index(result.judged_turn)}번째 대화에서 사기임을 알아차리셨습니다."
     if result.first_detectable_turn is not None:
-        line += f" 가장 빠른 판별 가능 시점은 {result.first_detectable_turn}번째 턴이었습니다."
+        line += (
+            f" 가장 빠른 판별 가능 시점은 {exchange_index(result.first_detectable_turn)}번째"
+            " 대화였습니다."
+        )
     return line
 
 
@@ -105,7 +114,7 @@ def _weakness(missed, result):
     if not missed:
         return "특별히 놓친 판별 단서는 없었습니다."
     heaviest = max(missed, key=lambda m: m["weight"])
-    return f"{heaviest['turn']}번째 턴의 신호를 지나쳤습니다 — {heaviest['trigger']}"
+    return f"{heaviest['exchange']}번째 대화의 신호를 지나쳤습니다 — {heaviest['trigger']}"
 
 
 def _timeline(state, tell_points, result):
