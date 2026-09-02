@@ -770,10 +770,22 @@ export default function Simulation() {
                   </div>
                 ))}
 
+                {/* 사기범 응답 대기. 메신저 관례대로 점 세 개가 시차를 두고 튄다.
+                    지연을 음수로 주면 화면에 뜨는 순간 이미 각 점이 다른 위상에 있어
+                    첫 주기부터 물결처럼 보인다(0 으로 두면 셋이 잠깐 함께 멈춰 있다). */}
                 {waiting && (
                   <div className="flex justify-start">
-                    <div className="bg-gray-100 border border-gray-200 rounded-2xl rounded-bl-none px-4 py-3">
-                      <span className="text-xs text-gray-400">입력 중...</span>
+                    <div
+                      className="bg-gray-100 border border-gray-200 rounded-2xl rounded-bl-none px-4 py-3"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <span className="sr-only">상대가 메시지를 입력하고 있습니다</span>
+                      <span className="flex items-center gap-1" aria-hidden="true">
+                        <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce motion-reduce:animate-none [animation-delay:-0.32s]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce motion-reduce:animate-none [animation-delay:-0.16s]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce motion-reduce:animate-none" />
+                      </span>
                     </div>
                   </div>
                 )}
