@@ -10,6 +10,7 @@ import {
   submitJudgment,
 } from "../api/trainingApi";
 import { newIdempotencyKey } from "../api/client";
+import { getAudioPlayer, unlockAudio } from "../audio/player";
 
 const MAX_INPUT_CHARS = 200;
 const MAX_RECORDING_MS = 30_000;
@@ -166,7 +167,8 @@ export default function Simulation() {
       player.onended = null;
       player.onerror = null;
       player.pause();
-      player.removeAttribute("src");
+      // ⚠️ src 를 지우지 않는다. 공유 요소라 지우면 다음 재생 때 잠금이 다시 걸린다.
+      // 재생은 어차피 매번 src 를 새로 넣는다.
     }
     audioPlayerRef.current = null;
   }, []);
@@ -184,7 +186,11 @@ export default function Simulation() {
       return;
     }
 
-    const player = new Audio(`data:audio/mpeg;base64,${base64Audio}`);
+    // ⚠️ 문장마다 new Audio() 를 만들면 안 된다. iOS 는 잠금 해제가 요소 단위라
+    // 새 요소는 제스처 밖에서 재생할 수 없다 - 스피커를 껐다 켤 때만 한 번씩
+    // 들리던 증상의 원인이었다. 공유 요소 하나를 src 만 바꿔가며 재사용한다.
+    const player = getAudioPlayer();
+    player.src = `data:audio/mpeg;base64,${base64Audio}`;
     audioPlayerRef.current = player;
     let settled = false;
     const finish = () => {
@@ -215,6 +221,25 @@ export default function Simulation() {
       playNextAudioRef.current = null;
     };
   }, [playNextQueuedAudio]);
+
+  // 잠금 해제 폴백. 보통은 CallIncoming 의 "전화 받기" 탭에서 이미 풀리지만,
+  // /simulation 은 Recommendation·UserInfo 에서도 바로 들어올 수 있어서 그 경로를 받친다.
+  // 화면 어디든 첫 탭 한 번이면 열리고, 그때 밀려 있던 음성이 있으면 이어서 재생한다.
+  useEffect(() => {
+    const onFirstTap = () => {
+      unlockAudio().then((ok) => {
+        if (!ok || !mountedRef.current) return;
+        setAudioNotice(null);
+        // 자동 재생이 막혀 큐가 비워졌다면 마지막 발화부터 다시 들려준다.
+        if (speakerOnRef.current && !audioPlayerRef.current && latestAudioRef.current) {
+          audioQueueRef.current.push(latestAudioRef.current);
+          playNextAudioRef.current?.();
+        }
+      });
+    };
+    window.addEventListener("pointerdown", onFirstTap, { once: true });
+    return () => window.removeEventListener("pointerdown", onFirstTap);
+  }, []);
 
   const enqueueServerAudio = useCallback((base64Audio) => {
     if (!base64Audio) return;
