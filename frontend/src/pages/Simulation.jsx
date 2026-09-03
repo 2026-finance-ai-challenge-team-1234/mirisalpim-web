@@ -149,6 +149,8 @@ export default function Simulation() {
   const mountedRef = useRef(true);
   const speakerOnRef = useRef(true);
   const audioPlayerRef = useRef(null);
+  // 재생 세대. pause()/src 교체로 취소된 옛 재생의 실패를 무시하는 데 쓴다.
+  const playTokenRef = useRef(0);
   const audioQueueRef = useRef([]);
   const playNextAudioRef = useRef(null);
   const latestAudioRef = useRef(null);
@@ -164,8 +166,12 @@ export default function Simulation() {
     audioQueueRef.current = [];
     const player = audioPlayerRef.current;
     if (player) {
+      // 공유 요소라 핸들러가 남으면 다음 재생에 섞인다. 여기서 전부 뗀다.
       player.onended = null;
       player.onerror = null;
+      player.onplaying = null;
+      // 진행 중이던 재생의 실패(pause 로 인한 AbortError)를 무효화한다.
+      playTokenRef.current += 1;
       player.pause();
       // ⚠️ src 를 지우지 않는다. 공유 요소라 지우면 다음 재생 때 잠금이 다시 걸린다.
       // 재생은 어차피 매번 src 를 새로 넣는다.
@@ -200,15 +206,25 @@ export default function Simulation() {
       playNextAudioRef.current?.();
     };
     player.onended = finish;
+    // 재생이 실제로 시작되면 남아 있던 안내를 지운다. play() 프로미스 해석 순서와
+    // 무관하게, 소리가 나는 동안에는 "차단됐다"는 문구가 남지 않게 하는 장치다.
+    player.onplaying = () => setAudioNotice(null);
     player.onerror = () => {
       setAudioNotice("일부 음성을 재생하지 못해 자막으로 계속 진행하고 있어요.");
       finish();
     };
+    const playToken = ++playTokenRef.current;
     player.play().then(() => setAudioNotice(null)).catch((err) => {
+      // ⚠️ 실패가 곧 "자동 재생 차단"은 아니다. stopAudioPlayback() 의 pause() 나
+      // 다음 문장을 위한 src 교체로 취소되면 AbortError 가 나는데(마이크를 누르거나
+      // 스피커를 끄면 매번 발생한다), 이걸 차단으로 오인하면 소리는 멀쩡히 나는데
+      // 안내 문구만 남는다. 취소된 재생과 이미 다음 재생으로 넘어간 경우는 무시한다.
+      if (err?.name === "AbortError" || playTokenRef.current !== playToken) return;
       console.warn("[Simulation] 오디오 자동 재생 차단:", err);
       settled = true;
       player.onended = null;
       player.onerror = null;
+      player.onplaying = null;
       audioQueueRef.current = [];
       audioPlayerRef.current = null;
       setAudioNotice("자동 재생이 차단됐어요. 스피커를 껐다 켜면 다시 들을 수 있어요.");
