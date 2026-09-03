@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 import { useTrainee } from "../hooks/useTrainee";
+import { unlockAudio } from "../audio/player";
 
 function readPrevTrack() {
   return localStorage.getItem("selectedScenario") ? "ai" : "direct";
@@ -24,6 +25,10 @@ export default function CallIncoming() {
   };
 
   const handleAccept = () => {
+    // ⚠️ 반드시 여기서(=사용자 탭 핸들러 안에서) 오디오 잠금을 푼다. 모바일은 제스처
+    // 밖에서 시작한 재생을 막는데, 훈련 화면의 첫 발화는 네트워크 응답 후에 재생되어
+    // 제스처가 이미 끊긴 상태다. 통화를 받는 이 탭이 그 직전의 마지막 제스처다.
+    unlockAudio();
     navigate("/simulation");
   };
 
