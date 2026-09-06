@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchRecommendation } from "../api/recommendationApi";
 
@@ -7,6 +7,8 @@ const MIN_LOADING_MS = 1500; // 응답이 너무 빨리 와도 로딩 연출이 
 export default function SurveyLoading() {
   const navigate = useNavigate();
   const { state } = useLocation();
+  const [error, setError] = useState(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     // Survey에서 넘어온 게 아니라 새로고침/직접 URL 접근이면 답변이 없음 → 설문으로 되돌림
@@ -19,13 +21,19 @@ export default function SurveyLoading() {
     let cancelled = false;
 
     const run = async () => {
-      const [recommendation] = await Promise.all([
-        fetchRecommendation(surveyAnswers),
-        new Promise((resolve) => setTimeout(resolve, MIN_LOADING_MS)),
-      ]);
+      try {
+        const [recommendation] = await Promise.all([
+          fetchRecommendation(surveyAnswers),
+          new Promise((resolve) => setTimeout(resolve, MIN_LOADING_MS)),
+        ]);
 
-      if (!cancelled) {
-        navigate("/recommendation", { state: { recommendation, surveyAnswers }, replace: true });
+        if (!cancelled) {
+          navigate("/recommendation", { state: { recommendation, surveyAnswers }, replace: true });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || "추천을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
+        }
       }
     };
 
@@ -34,7 +42,27 @@ export default function SurveyLoading() {
     return () => {
       cancelled = true;
     };
-  }, [state, navigate]);
+  }, [state, navigate, attempt]);
+
+  if (error) {
+    return (
+      <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center p-6">
+        <div className="w-full max-w-[393px] bg-white rounded-2xl p-6 text-center space-y-4">
+          <h2 className="text-lg font-extrabold text-[#191F28]">추천을 불러오지 못했어요</h2>
+          <p role="alert" className="text-sm text-gray-600 break-keep">{error}</p>
+          <button
+            onClick={() => { setError(null); setAttempt((value) => value + 1); }}
+            className="w-full bg-[#0052CC] text-white py-3 rounded-xl font-bold"
+          >
+            다시 시도하기
+          </button>
+          <button onClick={() => navigate("/survey")} className="text-sm text-gray-600">
+            설문으로 돌아가기
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[100dvh] bg-[#F8F9FA] flex justify-center items-center font-['Gothic_A1'] antialiased py-0 sm:py-6">

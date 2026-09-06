@@ -76,6 +76,8 @@ export default function Report() {
     setSaving(true);
 
     try {
+      // 폰트가 바뀌기 전 치수로 캡처하면 줄바꿈과 글자가 겹칠 수 있다.
+      await document.fonts.ready;
       // html2canvas는 Tailwind v4가 쓰는 oklch() 색상을 파싱하지 못해 실패함 → html-to-image 사용.
       //
       // 폰트는 그대로 살리는 게 기본이다. index.html 의 구글 폰트 <link> 에
@@ -86,6 +88,12 @@ export default function Report() {
         backgroundColor: "#ffffff",
         pixelRatio: Math.min(window.devicePixelRatio || 1, 2), // 너무 큰 이미지 방지
         cacheBust: true,
+        // 대화는 화면에서만 확인한다. 다운로드·파일 공유와 폰트 폴백 모두
+        // 같은 필터를 사용해 대화 원문이 이미지에 포함되지 않게 한다.
+        filter: (node) => !node.hasAttribute?.("data-report-private"),
+        // 캡처 크기는 원래 DOM 기준이므로 제외한 대화 높이만큼 줄인다.
+        height: captureRef.current.offsetHeight
+          - (captureRef.current.querySelector("[data-report-private]")?.offsetHeight || 0),
       };
 
       let dataUrl;
@@ -126,7 +134,7 @@ export default function Report() {
       showToast("success", "리포트 이미지를 저장했어요!");
     } catch (err) {
       console.error("[Report] 이미지 저장 실패:", err);
-      showToast("error", "이미지 저장에 실패했어요. 화면을 캡처해 저장해주세요.");
+      showToast("error", "이미지 저장에 실패했어요. 잠시 후 다시 시도해주세요.");
     } finally {
       setSaving(false);
     }
@@ -270,7 +278,7 @@ export default function Report() {
 
           {/* ───────── ③ 대화 리플레이 (자막 + 위험 지점 강조) ───────── */}
           {(transcript.length > 0 || report.timeline?.length > 0) && (
-            <div>
+            <div data-report-private>
               <button
                 onClick={() => setShowTimeline((v) => !v)}
                 className="w-full flex items-center justify-between mb-2.5"

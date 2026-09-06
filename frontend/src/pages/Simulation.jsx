@@ -339,17 +339,18 @@ export default function Simulation() {
 
   // ───────── 대화 한 턴 ─────────
   const applyTurnResult = (data, userText = null) => {
-    const turn = data.turnNo ?? turnCounterRef.current + 1;
+    const userTurn = turnCounterRef.current + 1;
+    const turn = data.turnNo ?? userTurn + (data.scammerText ? 1 : 0);
     turnCounterRef.current = turn;
 
     if (userText) {
-      setChatHistory((prev) => [...prev, { sender: "user", text: userText, turn }]);
+      setChatHistory((prev) => [...prev, { sender: "user", text: userText, turn: userTurn }]);
     } else {
       // 텍스트 입력 경로는 사용자 발화를 먼저 넣어두므로, 마지막 항목에 턴만 채워 준다.
       setChatHistory((prev) =>
         prev.map((item, idx) =>
           idx === prev.length - 1 && item.sender === "user" && item.turn == null
-            ? { ...item, turn }
+            ? { ...item, turn: userTurn }
             : item,
         ),
       );
@@ -452,7 +453,7 @@ export default function Simulation() {
               if (data.userText) {
                 setChatHistory((prev) => [
                   ...prev,
-                  { sender: "user", text: data.userText, requestId },
+                  { sender: "user", text: data.userText, requestId, turn: data.turnNo },
                 ]);
               }
               return;
@@ -491,7 +492,8 @@ export default function Simulation() {
 
             if (event === "done") {
               const finalText = data.text || streamedText;
-              const turn = data.turnNo ?? turnCounterRef.current + 1;
+              const userTurn = turnCounterRef.current + 1;
+              const turn = data.turnNo ?? userTurn + (finalText ? 1 : 0);
               turnCounterRef.current = turn;
               setChatHistory((prev) => {
                 const hasBot = prev.some(
@@ -507,14 +509,17 @@ export default function Simulation() {
                 );
               });
 
-              // 이 턴에 속한 발화(사용자·상대방)에 턴 번호를 채워 리포트에서 위험 지점과 맞춘다.
+              // accepted는 사용자 턴, done은 최종 턴이다. 사용자 번호를 상대방
+              // 번호로 덮으면 짝수 턴에 기록된 위험행동 마커가 리포트에서 사라진다.
               setChatHistory((prev) =>
                 prev.map((item) =>
-                  item.requestId === requestId ? { ...item, turn } : item,
+                  item.requestId === requestId
+                    ? { ...item, turn: item.sender === "user" ? (item.turn ?? userTurn) : turn }
+                    : item,
                 ),
               );
 
-                        if (!receivedAudio) {
+              if (!receivedAudio) {
                 setAudioNotice("음성을 재생할 수 없어 화면에 자막을 표시하고 있어요.");
               } else if (data.audioComplete === false) {
                 setAudioNotice("일부 음성을 재생하지 못해 자막으로 계속 진행하고 있어요.");
