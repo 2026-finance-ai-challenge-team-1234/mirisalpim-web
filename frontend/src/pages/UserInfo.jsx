@@ -14,6 +14,7 @@ export default function UserInfo() {
 
   const [showNoticeModal, setShowNoticeModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleStartTraining = () => {
     if (!userName.trim()) return;
@@ -21,7 +22,9 @@ export default function UserInfo() {
   };
 
   const handleConfirmStart = async () => {
+    if (submitting) return;
     setSubmitting(true);
+    setError(null);
 
     try {
       await apiPost("/user-info", {
@@ -32,10 +35,12 @@ export default function UserInfo() {
         category: localStorage.getItem("selectedCategory"),
       });
     } catch (err) {
-      console.warn("[UserInfo] 서버 저장 실패, 로컬 데이터로 계속 진행합니다:", err.message);
+      setError(err.message || "훈련 유형을 저장하지 못했어요. 다시 시도해주세요.");
+      return;
+    } finally {
+      setSubmitting(false);
     }
 
-    setSubmitting(false);
     setShowNoticeModal(false);
 
     // 개인정보는 저장하지 않고 메모리(Context)에만 담아 다음 화면으로 나른다.
@@ -153,13 +158,21 @@ export default function UserInfo() {
                 </p>
               </div>
 
+              {error && (
+                <p role="alert" className="text-xs text-red-600 leading-relaxed break-keep">{error}</p>
+              )}
               <button
                 onClick={handleConfirmStart}
                 disabled={submitting}
                 className="w-full bg-[#0052CC] text-white py-3.5 rounded-xl text-xs font-bold hover:bg-blue-700 transition shadow-md shadow-blue-500/20 disabled:opacity-60"
               >
-                {submitting ? "저장하는 중..." : "이해했습니다 (체험 시작) →"}
+                {submitting ? "저장하는 중..." : error ? "다시 시도하기" : "이해했습니다 (체험 시작) →"}
               </button>
+              {error && (
+                <button onClick={() => setShowNoticeModal(false)} disabled={submitting} className="text-xs text-gray-600">
+                  돌아가기
+                </button>
+              )}
             </div>
           </div>
         )}

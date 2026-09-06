@@ -1930,6 +1930,72 @@ class TurnThrottleTests(TestCase):
         # opening + user + scammer. 두 번째 요청이 턴을 진행시켰다면 5건이 된다.
         self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 3)
 
+    def test_cached_turn_is_not_returned_to_another_client(self):
+        session_id = self.start_training()
+        headers = {"Idempotency-Key": "shared-request-key"}
+        self.assertEqual(self.turn(session_id, headers=headers).status_code, 200)
+        other = Client()
+        other.get("/api/v1/bootstrap")
+
+        with patch("training.views.step") as mocked_step:
+            response = other.post(
+                f"/api/v1/training-sessions/{session_id}/turns",
+                data={"text": "안녕하세요"}, content_type="application/json",
+                headers=headers,
+            )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "SESSION_NOT_FOUND")
+        mocked_step.assert_not_called()
+
+    def test_cached_turn_does_not_bypass_expiry(self):
+        session_id = self.start_training()
+        headers = {"Idempotency-Key": "expired-request-key"}
+        self.turn(session_id, headers=headers)
+        Session.objects.filter(pk=session_id).update(
+            last_activity_at=timezone.now() - timedelta(minutes=31)
+        )
+
+        response = self.turn(session_id, headers=headers)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "SESSION_EXPIRED")
+        self.assertFalse(Session.objects.get(pk=session_id).turns.exclude(text="").exists())
+
+    def test_cached_turn_is_not_replayed_after_judgment(self):
+        session_id = self.start_training()
+        headers = {"Idempotency-Key": "completed-request-key"}
+        self.turn(session_id, headers=headers)
+        with patch("training.views.interpret", return_value=None):
+            judged = self.client.post(
+                f"/api/v1/training-sessions/{session_id}/judgment",
+                data={"isScamGuess": True}, content_type="application/json",
+            )
+        self.assertEqual(judged.status_code, 200)
+
+        response = self.turn(session_id, headers=headers)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "SESSION_ENDED")
+
+    def test_last_turn_can_be_replayed_but_new_turn_is_rejected(self):
+        session_id = self.start_training()
+        session = Session.objects.get(pk=session_id)
+        max_turns = load_scenario(session.scenario_id).max_turns
+        Session.objects.filter(pk=session_id).update(turn=max_turns - 1)
+        headers = {"Idempotency-Key": "last-request-key"}
+
+        first = self.turn(session_id, headers=headers)
+        replay = self.turn(session_id, headers=headers)
+        new_turn = self.turn(session_id, headers={"Idempotency-Key": "new-request-key"})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.json()["ended"])
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(first.json(), replay.json())
+        self.assertEqual(new_turn.status_code, 409)
+        self.assertEqual(Session.objects.get(pk=session_id).turns.count(), 2)
+
     def test_different_idempotency_key_advances_the_turn(self):
         session_id = self.start_training()
 

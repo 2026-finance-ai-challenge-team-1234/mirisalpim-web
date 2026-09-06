@@ -546,7 +546,7 @@ def _run_step(scenario, state, masked_text, link_clicked=False):
     return outcome, None
 
 
-def _open_turn(session_id, anon_client_id):
+def _open_turn(session_id, anon_client_id, *, allow_awaiting_judgment=False):
     """턴 시작에 필요한 것만 짧은 트랜잭션에서 읽는다.
 
     ⚠️ LLM 호출은 반드시 이 트랜잭션 밖에서 한다. 예전 구현은 step() 을 통째로
@@ -578,7 +578,10 @@ def _open_turn(session_id, anon_client_id):
             return None, error_response(
                 "TURN_CONFLICT", "최종 판단을 처리 중입니다.", 409
             )
-        if session.status != Session.STATUS_ACTIVE:
+        if session.status != Session.STATUS_ACTIVE and not (
+            allow_awaiting_judgment
+            and session.status == Session.STATUS_AWAITING_JUDGMENT
+        ):
             return None, error_response("SESSION_ENDED", "이미 종료된 훈련입니다.", 409)
 
         return (load_scenario(session.scenario_id), load_state(session), session.turn), None
@@ -603,12 +606,16 @@ def submit_turn(request, session_id):
     # 같은 Idempotency-Key 로 다시 왔다면 턴을 또 진행하지 않고 첫 응답을 돌려준다.
     idem_key = idempotency_cache_key(request, session_id)
     replayed = remembered_turn(idem_key)
-    if replayed is not None:
-        return json_response(replayed)
 
-    context, failure = _open_turn(session_id, anon_client_id)
+    # 캐시 응답도 소유권·만료·종료 검사를 거친다. 최대 턴 응답을 재전송하는
+    # 경우에만 판단 대기를 허용하며, 새 턴이나 판단 완료 후 재생은 허용하지 않는다.
+    context, failure = _open_turn(
+        session_id, anon_client_id, allow_awaiting_judgment=replayed is not None
+    )
     if failure is not None:
         return failure
+    if replayed is not None:
+        return json_response(replayed)
     scenario, state, loaded_turn = context
     # 프롬프트에만 쓰고 저장하지 않는다 (trainee.py 참고).
     apply_trainee(state, *trainee_from_body(body))
